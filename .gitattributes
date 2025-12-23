@@ -1,0 +1,31 @@
+# 所有文件默认自动识别文本类型，提交时转为 LF
+* text=auto eol=lf
+
+# Go 核心文件强制 LF
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+go.work text eol=lf
+
+# 文档/配置文件强制 LF
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+
+# Linux 脚本强制 LF（若有部署/编译脚本）
+*.sh text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+
+# Windows 批处理文件（若有）强制 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件（如图片、编译产物）不处理换行符
+*.png binary
+*.jpg binary
+*.gif binary
+*.zip binary
+*.exe binary

@@ -1,0 +1,63 @@
+# Go 编译输出
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试文件
+*.test
+*.out
+*.coverprofile
+coverage.html
+coverage.txt
+
+# 依赖管理
+# 如果使用 vendor 模式且要提交 vendor 目录，请删除下一行
+vendor/
+
+# 环境配置文件
+.env
+.env.local
+.env.*.local
+*_local.go
+*_local.toml
+*_local.yaml
+*_local.yml
+*_local.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 日志
+*.log
+logs/
+
+# 用户上传内容
+static/uploads/
+static/avatars/
+static/files/
+
+# 证书和密钥
+*.key
+*.pem
+*.crt
+*.cert
+/certs/
+/ssl/
+
+# 特定于项目的忽略（根据需要调整）
+internal/service/kafka/start.bat
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+/tmp/
+/temp/
+*.tmp
