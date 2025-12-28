@@ -38,9 +38,15 @@ type Config struct {
 var config *Config
 
 func LoadConfig() error {
+
+	configPath := "configs/config.toml"
 	// 本地部署
-	if _, err := toml.DecodeFile("C:\\Users\\chenjun\\goProject\\OmniLink\\configs\\config_local.toml", config); err != nil {
-		log.Fatal(err.Error())
+	// if _, err := toml.DecodeFile("C:\\Users\\chenjun\\goProject\\OmniLink\\configs\\config_local.toml", config); err != nil {
+	// 	log.Fatal(err.Error())
+	// 	return err
+	// }
+	if _, err := toml.DecodeFile(configPath, config); err != nil {
+		log.Printf("加载配置文件失败: %v, 尝试使用默认设置", err)
 		return err
 	}
 	// Ubuntu22.04云服务器部署

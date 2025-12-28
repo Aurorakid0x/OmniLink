@@ -1,0 +1,14 @@
+[mainConfig]
+appName = "OmniLink"
+host = "0.0.0.0"
+port = 8443
+
+[mysqlConfig]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = "你的密码"
+databaseName = "OmniLink"
+
+[logConfig]
+logPath = "./logs/app.log"
