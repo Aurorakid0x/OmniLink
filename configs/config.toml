@@ -12,3 +12,8 @@ databaseName = "OmniLink"
 
 [logConfig]
 logPath = "./logs/app.log"
+
+[jwtConfig]
+key = "123="
+expireHours = 24
+issuer = "OmniLink"

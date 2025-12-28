@@ -1,10 +1,13 @@
 package http
 
 import (
+	"OmniLink/internal/config"
 	"OmniLink/internal/initial"
+	jwtMiddleware "OmniLink/internal/middleware/jwt"
 	"OmniLink/internal/modules/user/application/service"
 	"OmniLink/internal/modules/user/infrastructure/persistence"
 	userHandler "OmniLink/internal/modules/user/interface/http"
+	"OmniLink/pkg/ssl"
 
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -20,7 +23,7 @@ func init() {
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
 	GE.Use(cors.New(corsConfig))
 	//先把https重定向注释掉，等https证书配置好再打开
-	//GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
+	GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
 	// Dependency Injection Wiring
 	// 1. Repository
 	userRepo := persistence.NewUserInfoRepository(initial.GormDB)
@@ -31,8 +34,17 @@ func init() {
 
 	//GE.Static("/static/avatars", config.GetConfig().StaticAvatarPath)
 	//GE.Static("/static/files", config.GetConfig().StaticFilePath)
-	//GE.POST("/login", v1.Login)
+	GE.POST("/login", userH.Login)
 	GE.POST("/register", userH.Register)
+
+	authed := GE.Group("/")
+	authed.Use(jwtMiddleware.Auth())
+	authed.GET("/auth/ping", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"uuid":     c.GetString("uuid"),
+			"username": c.GetString("username"),
+		})
+	})
 	//GE.POST("/user/updateUserInfo", v1.UpdateUserInfo)
 	// GE.POST("/user/getUserInfoList", v1.GetUserInfoList)
 	// GE.POST("/user/ableUsers", v1.AbleUsers)

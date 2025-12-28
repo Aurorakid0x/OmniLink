@@ -1,11 +1,10 @@
 package respond
 
-type RegisterRespond struct {
-	Uuid     string `json:"uuid"`
-	Username string `json:"username"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar"`
-	//Email     string `json:"email"`
+type LoginRespond struct {
+	Uuid      string `json:"uuid"`
+	Username  string `json:"username"`
+	Nickname  string `json:"nickname"`
+	Avatar    string `json:"avatar"`
 	Gender    int8   `json:"gender"`
 	Birthday  string `json:"birthday"`
 	Signature string `json:"signature"`

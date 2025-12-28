@@ -86,7 +86,7 @@ import { useStore } from 'vuex'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Postcard, CircleCheck } from '@element-plus/icons-vue'
-import axios from 'axios'
+import request from '../../utils/request'
 
 const store = useStore()
 const router = useRouter()
@@ -138,24 +138,32 @@ const handleRegister = async () => {
     if (valid) {
       loading.value = true
       try {
-        const backendUrl = store.state.backendUrl
-        const response = await axios.post(`${backendUrl}/register`, {
+        const response = await request.post('/register', {
           username: registerForm.username,
           nickname: registerForm.nickname,
           password: registerForm.password
         })
 
-        if (response.data && response.data.code === 200) {
-           ElMessage.success('注册成功，请登录')
-           router.push('/login')
+        const resData = response.data
+        if (resData && resData.code === 200) {
+           const registerData = resData.data
+           if (registerData && registerData.token) {
+             store.commit('setToken', registerData.token)
+             store.commit('setUserInfo', registerData)
+             ElMessage.success('注册成功，自动登录')
+             router.push('/chat')
+           } else {
+             // 降级处理：如果没有返回 token，跳转登录
+             ElMessage.success('注册成功，请登录')
+             router.push('/login')
+           }
         } else {
-           const msg = response.data?.msg || response.data?.message || '注册失败'
+           const msg = resData?.msg || resData?.message || '注册失败'
            ElMessage.error(msg)
         }
       } catch (error) {
         console.error(error)
-        const errorMsg = error.response?.data?.msg || error.message || '注册请求失败'
-        ElMessage.error(errorMsg)
+        // 拦截器已处理部分错误
       } finally {
         loading.value = false
       }

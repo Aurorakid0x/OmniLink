@@ -25,9 +25,16 @@ type LogConfig struct {
 	LogPath string `toml:"logPath"`
 }
 
+type JwtConfig struct {
+	Key         string `toml:"key"`
+	ExpireHours int    `toml:"expireHours"`
+	Issuer      string `toml:"issuer"`
+}
+
 type Config struct {
 	MainConfig  `toml:"mainConfig"`
 	MysqlConfig `toml:"mysqlConfig"`
+	JwtConfig   `toml:"jwtConfig"`
 	//RedisConfig     `toml:"redisConfig"`
 	//AuthCodeConfig  `toml:"authCodeConfig"`
 	LogConfig `toml:"logConfig"`

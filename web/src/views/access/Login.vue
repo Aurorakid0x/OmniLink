@@ -64,7 +64,7 @@ import { useStore } from 'vuex'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
-import axios from 'axios'
+import request from '../../utils/request'
 
 const store = useStore()
 const router = useRouter()
@@ -96,24 +96,41 @@ const handleLogin = async () => {
     if (valid) {
       loading.value = true
       try {
-        const backendUrl = store.state.backendUrl
-        const response = await axios.post(`${backendUrl}/login`, {
+        // 使用封装的 request，不需要手动拼接 backendUrl，baseURL 已在 request.js 中配置
+        // 但为了兼容 store 中的配置（如果将来动态修改），也可以保持原样，
+        // 不过这里建议直接用 request.post('/login')
+        const response = await request.post('/login', {
           username: loginForm.username,
           password: loginForm.password
         })
 
-        if (response.data) {
-           const userInfo = response.data.data || response.data
-           store.commit('setUserInfo', userInfo)
-           ElMessage.success('登录成功')
-           router.push('/chat')
+        // axios 响应结构：response.data 是后端返回的 JSON
+        // 后端返回结构：{ code: 200, message: "Success", data: { user: {...}, token: "..." } }
+        // 或者 data 直接包含 token 和 user 字段
+        
+        const resData = response.data
+        if (resData.code === 200) {
+           // 假设后端返回 data 结构为 { token: "...", ...userInfo } 
+           // 或者 { user: {...}, token: "..." }
+           // 根据之前的 user_info_service.go 代码：
+           // LoginRespond 包含 Uuid, Username... 和 Token 字段，是扁平的
+           const loginData = resData.data
+           
+           if (loginData && loginData.token) {
+             store.commit('setToken', loginData.token)
+             // 移除 token 字段后再保存 userInfo，或者直接保存也没关系
+             store.commit('setUserInfo', loginData)
+             ElMessage.success('登录成功')
+             router.push('/chat')
+           } else {
+             ElMessage.error('登录异常：未返回 Token')
+           }
         } else {
-           ElMessage.error('登录失败：服务器无响应')
+           ElMessage.error(resData.message || '登录失败')
         }
       } catch (error) {
         console.error(error)
-        const errorMsg = error.response?.data?.msg || error.message || '登录请求失败'
-        ElMessage.error(errorMsg)
+        // 错误已在拦截器处理一部分，这里可以不再重复处理，或者处理特定逻辑
       } finally {
         loading.value = false
       }
