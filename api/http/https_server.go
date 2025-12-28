@@ -1,13 +1,10 @@
 package http
 
 import (
-	//"OmniLink/internal/config"
 	"OmniLink/internal/initial"
 	"OmniLink/internal/modules/user/application/service"
 	"OmniLink/internal/modules/user/infrastructure/persistence"
 	userHandler "OmniLink/internal/modules/user/interface/http"
-
-	//ssl "OmniLink/pkg/ssl"
 
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -22,8 +19,8 @@ func init() {
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
 	GE.Use(cors.New(corsConfig))
+	//先把https重定向注释掉，等https证书配置好再打开
 	//GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
-	// 暂时注释掉 TLS 重定向，以便在没有证书的情况下通过 HTTP 运行
 	// Dependency Injection Wiring
 	// 1. Repository
 	userRepo := persistence.NewUserInfoRepository(initial.GormDB)

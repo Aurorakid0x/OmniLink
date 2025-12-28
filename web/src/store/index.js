@@ -3,7 +3,7 @@ import { createStore } from 'vuex'
 export default createStore({
   state: {
     userInfo: null,
-    backendUrl: 'http://localhost:8080'
+    backendUrl: 'https://localhost:8000'
   },
   getters: {
   },

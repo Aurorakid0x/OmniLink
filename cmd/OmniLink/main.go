@@ -20,10 +20,11 @@ func main() {
 	go func() {
 		addr := fmt.Sprintf("%s:%d", host, port)
 		zlog.Info(fmt.Sprintf("服务器正在启动，监听地址: %s", addr))
-
 		// 目前使用 HTTP 启动。如果需要 HTTPS，请配置证书并使用 GE.RunTLS
 		// if err := https_server.GE.RunTLS(addr, "cert.pem", "key.pem"); err != nil {
-		if err := https_server.GE.Run(addr); err != nil {
+
+		// 使用 HTTPS 启动
+		if err := https_server.GE.RunTLS(addr, "cert.pem", "key.pem"); err != nil {
 			zlog.Fatal("服务器启动失败: " + err.Error())
 			return
 		}

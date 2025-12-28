@@ -39,7 +39,7 @@ var config *Config
 
 func LoadConfig() error {
 
-	configPath := "configs/config.toml"
+	configPath := "configs/config_local.toml"
 	// 本地部署
 	// if _, err := toml.DecodeFile("C:\\Users\\chenjun\\goProject\\OmniLink\\configs\\config_local.toml", config); err != nil {
 	// 	log.Fatal(err.Error())

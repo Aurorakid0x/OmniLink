@@ -15,7 +15,7 @@ var GormDB *gorm.DB
 
 func init() {
 	conf := config.GetConfig()
-	user := conf.User
+	user := conf.MysqlConfig.User
 	password := conf.MysqlConfig.Password
 	host := conf.MysqlConfig.Host
 	port := conf.MysqlConfig.Port
