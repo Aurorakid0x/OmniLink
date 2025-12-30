@@ -32,9 +32,10 @@ func init() {
 	userRepo := persistence.NewUserInfoRepository(initial.GormDB)
 	contactRepo := contactPersistence.NewUserContactRepository(initial.GormDB)
 	applyRepo := contactPersistence.NewContactApplyRepository(initial.GormDB)
+	uow := contactPersistence.NewContactUnitOfWork(initial.GormDB)
 	// 2. Service
 	userSvc := service.NewUserInfoService(userRepo)
-	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo)
+	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow)
 	// 3. Handler
 	userH := userHandler.NewUserInfoHandler(userSvc)
 	contactH := contactHandler.NewContactHandler(contactSvc)
@@ -56,6 +57,8 @@ func init() {
 	authed.POST("/contact/getContactInfo", contactH.GetContactInfo)
 	authed.POST("/contact/applyContact", contactH.ApplyContact)
 	authed.POST("/contact/getNewContactList", contactH.GetNewContactList)
+	authed.POST("/contact/passContactApply", contactH.PassContactApply)
+	authed.POST("/contact/refuseContactApply", contactH.RefuseContactApply)
 	//GE.POST("/user/updateUserInfo", v1.UpdateUserInfo)
 	// GE.POST("/user/getUserInfoList", v1.GetUserInfoList)
 	// GE.POST("/user/ableUsers", v1.AbleUsers)

@@ -33,3 +33,28 @@ func (r *userContactRepositoryImpl) GetUserContactByUserIDAndContactID(userID st
 	}
 	return &contact, nil
 }
+
+func (r *userContactRepositoryImpl) GetUserContactByUserIDAndContactIDAndType(userID string, contactID string, contactType int8) (*entity.UserContact, error) {
+	var contact entity.UserContact
+	err := r.db.Where("user_id = ? AND contact_id = ? AND contact_type = ?", userID, contactID, contactType).First(&contact).Error
+	if err != nil {
+		return nil, err
+	}
+	return &contact, nil
+}
+
+func (r *userContactRepositoryImpl) CreateUserContact(contact *entity.UserContact) error {
+	return r.db.Create(contact).Error
+}
+
+func (r *userContactRepositoryImpl) UpdateUserContact(contact *entity.UserContact) error {
+	return r.db.Model(&entity.UserContact{}).
+		Where("id = ?", contact.Id).
+		Updates(map[string]interface{}{
+			"user_id":      contact.UserId,
+			"contact_id":   contact.ContactId,
+			"contact_type": contact.ContactType,
+			"status":       contact.Status,
+			"update_at":    contact.UpdateAt,
+		}).Error
+}

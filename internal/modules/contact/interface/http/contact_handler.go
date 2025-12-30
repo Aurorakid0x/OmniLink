@@ -81,3 +81,35 @@ func (h *ContactHandler) GetNewContactList(c *gin.Context) {
 	data, err := h.svc.GetNewContactList(req)
 	back.Result(c, data, err)
 }
+
+func (h *ContactHandler) PassContactApply(c *gin.Context) {
+	var req contactRequest.PassContactApplyRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	err := h.svc.PassContactApply(req)
+	back.Result(c, nil, err)
+}
+
+func (h *ContactHandler) RefuseContactApply(c *gin.Context) {
+	var req contactRequest.RefuseContactApplyRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	err := h.svc.RefuseContactApply(req)
+	back.Result(c, nil, err)
+}

@@ -5,6 +5,7 @@ import (
 	"OmniLink/internal/modules/contact/domain/repository"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type contactApplyRepositoryImpl struct {
@@ -20,6 +21,27 @@ func (r *contactApplyRepositoryImpl) GetContactApplyByUserIDAndContactID(userID 
 	err := r.db.
 		Where("user_id = ? AND contact_id = ? AND contact_type = ?", userID, contactID, contactType).
 		Order("id DESC").
+		First(&apply).Error
+	if err != nil {
+		return nil, err
+	}
+	return &apply, nil
+}
+
+func (r *contactApplyRepositoryImpl) GetContactApplyByUUID(uuid string) (*entity.ContactApply, error) {
+	var apply entity.ContactApply
+	err := r.db.Where("uuid = ?", uuid).First(&apply).Error
+	if err != nil {
+		return nil, err
+	}
+	return &apply, nil
+}
+
+func (r *contactApplyRepositoryImpl) GetContactApplyByUUIDForUpdate(uuid string) (*entity.ContactApply, error) {
+	var apply entity.ContactApply
+	err := r.db.
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("uuid = ?", uuid).
 		First(&apply).Error
 	if err != nil {
 		return nil, err

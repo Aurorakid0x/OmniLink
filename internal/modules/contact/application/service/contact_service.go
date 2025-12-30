@@ -21,19 +21,23 @@ type ContactService interface {
 	GetContactInfo(req contactRequest.GetContactInfoRequest) (*contactRespond.GetContactInfoRespond, error)
 	ApplyContact(req contactRequest.ApplyContactRequest) (*contactRespond.ApplyContactRespond, error)
 	GetNewContactList(req contactRequest.GetNewContactListRequest) ([]contactRespond.NewContactApplyItem, error)
+	PassContactApply(req contactRequest.PassContactApplyRequest) error
+	RefuseContactApply(req contactRequest.RefuseContactApplyRequest) error
 }
 
 type contactServiceImpl struct {
 	contactRepo contactRepository.UserContactRepository
 	applyRepo   contactRepository.ContactApplyRepository
 	userRepo    userRepository.UserInfoRepository
+	uow         contactRepository.ContactUnitOfWork
 }
 
-func NewContactService(contactRepo contactRepository.UserContactRepository, applyRepo contactRepository.ContactApplyRepository, userRepo userRepository.UserInfoRepository) ContactService {
+func NewContactService(contactRepo contactRepository.UserContactRepository, applyRepo contactRepository.ContactApplyRepository, userRepo userRepository.UserInfoRepository, uow contactRepository.ContactUnitOfWork) ContactService {
 	return &contactServiceImpl{
 		contactRepo: contactRepo,
 		applyRepo:   applyRepo,
 		userRepo:    userRepo,
+		uow:         uow,
 	}
 }
 
@@ -112,6 +116,120 @@ func (s *contactServiceImpl) GetUserList(req contactRequest.GetUserListRequest) 
 	}
 
 	return out, nil
+}
+
+func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactApplyRequest) error {
+	if req.OwnerId == "" || req.ApplyId == "" {
+		return xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
+	}
+
+	now := time.Now()
+	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository) error {
+		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return xerr.New(xerr.NotFound, "申请不存在")
+			}
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+
+		if apply.ContactType != 0 {
+			return xerr.New(xerr.BadRequest, "暂不支持群组申请")
+		}
+		if apply.ContactId != req.OwnerId {
+			return xerr.New(xerr.Forbidden, "无权操作该申请")
+		}
+		if apply.Status == 1 {
+			return nil
+		}
+		if apply.Status == 3 {
+			return xerr.New(xerr.Forbidden, "该申请已被拉黑")
+		}
+
+		apply.Status = 1
+		if err := applyRepo.UpdateContactApply(apply); err != nil {
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+
+		upsertFriend := func(userID, contactID string) error {
+			rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(userID, contactID, 0)
+			if err == nil {
+				if rel.Status == 0 {
+					return nil
+				}
+				rel.ContactType = 0
+				rel.Status = 0
+				rel.UpdateAt = now
+				return contactRepo.UpdateUserContact(rel)
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			newRel := &contactEntity.UserContact{
+				UserId:      userID,
+				ContactId:   contactID,
+				ContactType: 0,
+				Status:      0,
+				CreatedAt:   now,
+				UpdateAt:    now,
+			}
+			return contactRepo.CreateUserContact(newRel)
+		}
+
+		if err := upsertFriend(apply.UserId, apply.ContactId); err != nil {
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+		if err := upsertFriend(apply.ContactId, apply.UserId); err != nil {
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+
+		return nil
+	})
+}
+
+func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContactApplyRequest) error {
+	if req.OwnerId == "" || req.ApplyId == "" {
+		return xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
+	}
+
+	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository) error {
+		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return xerr.New(xerr.NotFound, "申请不存在")
+			}
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+
+		if apply.ContactType != 0 {
+			return xerr.New(xerr.BadRequest, "暂不支持群组申请")
+		}
+		if apply.ContactId != req.OwnerId {
+			return xerr.New(xerr.Forbidden, "无权操作该申请")
+		}
+		if apply.Status == 2 {
+			return nil
+		}
+		if apply.Status == 1 {
+			return xerr.New(xerr.BadRequest, "已通过，无法拒绝")
+		}
+		if apply.Status == 3 {
+			return xerr.New(xerr.Forbidden, "该申请已被拉黑")
+		}
+
+		apply.Status = 2
+		if err := applyRepo.UpdateContactApply(apply); err != nil {
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+		return nil
+	})
 }
 
 func (s *contactServiceImpl) GetContactInfo(req contactRequest.GetContactInfoRequest) (*contactRespond.GetContactInfoRespond, error) {
