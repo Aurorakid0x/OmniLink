@@ -3,11 +3,15 @@ package service
 import (
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
 	contactRespond "OmniLink/internal/modules/contact/application/dto/respond"
+	contactEntity "OmniLink/internal/modules/contact/domain/entity"
 	contactRepository "OmniLink/internal/modules/contact/domain/repository"
 	userRepository "OmniLink/internal/modules/user/domain/repository"
+	"OmniLink/pkg/util"
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
 	"errors"
+	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -15,16 +19,19 @@ import (
 type ContactService interface {
 	GetUserList(req contactRequest.GetUserListRequest) ([]contactRespond.UserListItem, error)
 	GetContactInfo(req contactRequest.GetContactInfoRequest) (*contactRespond.GetContactInfoRespond, error)
+	ApplyContact(req contactRequest.ApplyContactRequest) (*contactRespond.ApplyContactRespond, error)
 }
 
 type contactServiceImpl struct {
 	contactRepo contactRepository.UserContactRepository
+	applyRepo   contactRepository.ContactApplyRepository
 	userRepo    userRepository.UserInfoRepository
 }
 
-func NewContactService(contactRepo contactRepository.UserContactRepository, userRepo userRepository.UserInfoRepository) ContactService {
+func NewContactService(contactRepo contactRepository.UserContactRepository, applyRepo contactRepository.ContactApplyRepository, userRepo userRepository.UserInfoRepository) ContactService {
 	return &contactServiceImpl{
 		contactRepo: contactRepo,
+		applyRepo:   applyRepo,
 		userRepo:    userRepo,
 	}
 }
@@ -157,4 +164,86 @@ func (s *contactServiceImpl) GetContactInfo(req contactRequest.GetContactInfoReq
 		Gender:           -1,
 		Birthday:         "",
 	}, nil
+}
+
+func (s *contactServiceImpl) ApplyContact(req contactRequest.ApplyContactRequest) (*contactRespond.ApplyContactRespond, error) {
+	if req.OwnerId == "" || req.ContactId == "" {
+		return nil, xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
+	}
+	if req.OwnerId == req.ContactId {
+		return nil, xerr.New(xerr.BadRequest, "不能添加自己")
+	}
+
+	// 自动识别类型
+	contactType := int8(0)
+	if strings.HasPrefix(req.ContactId, "G") {
+		contactType = 1
+	}
+
+	if contactType == 0 {
+		briefs, err := s.userRepo.GetUserBriefByUUIDs([]string{req.ContactId})
+		if err != nil {
+			zlog.Error(err.Error())
+			return nil, xerr.ErrServerError
+		}
+		if len(briefs) == 0 {
+			return nil, xerr.New(xerr.NotFound, "用户不存在")
+		}
+		if briefs[0].Status != 0 {
+			return nil, xerr.New(xerr.Forbidden, "用户不可用")
+		}
+	}
+
+	// 检查关系状态
+	if rel, err := s.contactRepo.GetUserContactByUserIDAndContactID(req.OwnerId, req.ContactId); err == nil {
+		if rel.ContactType == contactType {
+			switch rel.Status {
+			case 0:
+				return nil, xerr.New(xerr.BadRequest, "已是好友")
+			case 1:
+				return nil, xerr.New(xerr.BadRequest, "您已将对方拉黑")
+			case 2:
+				return nil, xerr.New(xerr.Forbidden, "对方已将您拉黑")
+			}
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	now := time.Now()
+	apply, err := s.applyRepo.GetContactApplyByUserIDAndContactID(req.OwnerId, req.ContactId, contactType)
+	if err == nil {
+		apply.Status = 0
+		apply.Message = req.Message
+		apply.LastApplyAt = now
+		if apply.Uuid == "" {
+			apply.Uuid = util.GenerateApplyID()
+		}
+		if err := s.applyRepo.UpdateContactApply(apply); err != nil {
+			zlog.Error(err.Error())
+			return nil, xerr.ErrServerError
+		}
+		return &contactRespond.ApplyContactRespond{ApplyId: apply.Uuid}, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	newApply := contactEntity.ContactApply{
+		Uuid:        util.GenerateApplyID(),
+		UserId:      req.OwnerId,
+		ContactId:   req.ContactId,
+		ContactType: contactType,
+		Status:      0,
+		Message:     req.Message,
+		LastApplyAt: now,
+	}
+	if err := s.applyRepo.CreateContactApply(&newApply); err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	return &contactRespond.ApplyContactRespond{ApplyId: newApply.Uuid}, nil
 }
