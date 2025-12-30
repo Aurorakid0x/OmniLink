@@ -42,7 +42,7 @@ func (u *userInfoServiceImpl) Register(registerReq request.RegisterRequest) (*re
 	}
 
 	// 2. Generate UUID
-	uuid := util.GenerateShortUUID()
+	uuid := util.GenerateUserID()
 	// 3. Create UserInfo
 	newUser := entity.UserInfo{
 		Uuid:      uuid,

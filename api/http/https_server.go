@@ -4,6 +4,9 @@ import (
 	"OmniLink/internal/config"
 	"OmniLink/internal/initial"
 	jwtMiddleware "OmniLink/internal/middleware/jwt"
+	contactService "OmniLink/internal/modules/contact/application/service"
+	contactPersistence "OmniLink/internal/modules/contact/infrastructure/persistence"
+	contactHandler "OmniLink/internal/modules/contact/interface/http"
 	"OmniLink/internal/modules/user/application/service"
 	"OmniLink/internal/modules/user/infrastructure/persistence"
 	userHandler "OmniLink/internal/modules/user/interface/http"
@@ -27,10 +30,13 @@ func init() {
 	// Dependency Injection Wiring
 	// 1. Repository
 	userRepo := persistence.NewUserInfoRepository(initial.GormDB)
+	contactRepo := contactPersistence.NewUserContactRepository(initial.GormDB)
 	// 2. Service
 	userSvc := service.NewUserInfoService(userRepo)
+	contactSvc := contactService.NewContactService(contactRepo, userRepo)
 	// 3. Handler
 	userH := userHandler.NewUserInfoHandler(userSvc)
+	contactH := contactHandler.NewContactHandler(contactSvc)
 
 	//GE.Static("/static/avatars", config.GetConfig().StaticAvatarPath)
 	//GE.Static("/static/files", config.GetConfig().StaticFilePath)
@@ -45,6 +51,8 @@ func init() {
 			"username": c.GetString("username"),
 		})
 	})
+	authed.POST("/contact/getUserList", contactH.GetUserList)
+	authed.POST("/contact/getContactInfo", contactH.GetContactInfo)
 	//GE.POST("/user/updateUserInfo", v1.UpdateUserInfo)
 	// GE.POST("/user/getUserInfoList", v1.GetUserInfoList)
 	// GE.POST("/user/ableUsers", v1.AbleUsers)

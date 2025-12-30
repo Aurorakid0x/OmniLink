@@ -1,0 +1,51 @@
+package handler
+
+import (
+	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
+	"OmniLink/internal/modules/contact/application/service"
+	"OmniLink/pkg/back"
+	"OmniLink/pkg/xerr"
+	"OmniLink/pkg/zlog"
+
+	"github.com/gin-gonic/gin"
+)
+
+type ContactHandler struct {
+	svc service.ContactService
+}
+
+func NewContactHandler(svc service.ContactService) *ContactHandler {
+	return &ContactHandler{svc: svc}
+}
+
+func (h *ContactHandler) GetUserList(c *gin.Context) {
+	var req contactRequest.GetUserListRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	data, err := h.svc.GetUserList(req)
+	back.Result(c, data, err)
+}
+
+func (h *ContactHandler) GetContactInfo(c *gin.Context) {
+	var req contactRequest.GetContactInfoRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	data, err := h.svc.GetContactInfo(req)
+	back.Result(c, data, err)
+}

@@ -5,29 +5,27 @@ import router from '../router'
 
 // 创建 axios 实例
 const service = axios.create({
-  // 从 store 获取 baseURL，如果 store 还没初始化好，可以回退到默认值
-  // 注意：这里 store.state.backendUrl 可能在初始化时还没准备好，
-  // 但通常 request 是在组件中使用，此时 store 已准备好。
-  // 为了安全，也可以在这里硬编码或者读取环境变量
-  baseURL: 'https://localhost:8000', 
-  timeout: 5000 // 请求超时时间
+  // 优先使用环境变量，否则回退到 store 中的配置，最后回退到 localhost
+  // 注意：store.state.backendUrl 初始化可能较晚，但在组件调用时通常已就绪
+  baseURL: import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000',
+  timeout: 10000 // 请求超时时间
 })
 
 // request 拦截器
 service.interceptors.request.use(
   config => {
-    // 在发送请求之前做些什么
+    // 动态获取 baseURL，防止 store 变化后 axios 实例没更新
+    if (!config.baseURL || config.baseURL === 'http://localhost:8000') {
+        config.baseURL = store.state.backendUrl || import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+    }
+
     const token = store.state.token
     if (token) {
-      // 让每个请求携带 token
-      // ['Authorization'] 是自定义头部 key
-      // 请根据实际情况修改，例如 Bearer + token
       config.headers['Authorization'] = 'Bearer ' + token
     }
     return config
   },
   error => {
-    // 对请求错误做些什么
     console.log(error) // for debug
     return Promise.reject(error)
   }
@@ -43,12 +41,12 @@ service.interceptors.response.use(
     if (error.response) {
       const { status } = error.response
       if (status === 401) {
-        // 401 说明 token 过期或无效
         ElMessage.error('登录状态已过期，请重新登录')
         store.commit('clearAuth')
         router.push('/login')
       } else {
-        ElMessage.error(error.message || '请求失败')
+        // 允许业务层捕获错误进行优雅降级，这里只做通用提示
+        // ElMessage.error(error.message || '请求失败')
       }
     } else {
        ElMessage.error('网络连接失败')

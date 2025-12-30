@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	contact "OmniLink/internal/modules/contact/domain/entity"
 	"OmniLink/internal/modules/user/domain/entity"
 	"OmniLink/internal/modules/user/domain/repository"
 
@@ -41,4 +42,36 @@ func (r *userInfoRepositoryImpl) GetUserInfoByUsername(username string) (*entity
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *userInfoRepositoryImpl) GetUserBriefByUUIDs(uuids []string) ([]entity.UserBrief, error) {
+	if len(uuids) == 0 {
+		return []entity.UserBrief{}, nil
+	}
+
+	var users []entity.UserBrief
+	err := r.db.Model(&entity.UserInfo{}).
+		Select("uuid", "username", "nickname", "avatar", "status").
+		Where("uuid IN ?", uuids).
+		Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func (r *userInfoRepositoryImpl) GetUserContactInfoByUUIDs(uuids []string) ([]contact.UserContactInfo, error) {
+	if len(uuids) == 0 {
+		return []contact.UserContactInfo{}, nil
+	}
+
+	var users []contact.UserContactInfo
+	err := r.db.Model(&entity.UserInfo{}).
+		Select("uuid", "username", "nickname", "avatar", "signature", "gender", "birthday", "status").
+		Where("uuid IN ?", uuids).
+		Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
 }

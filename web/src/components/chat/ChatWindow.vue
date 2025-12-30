@@ -3,150 +3,219 @@
     <!-- Header -->
     <div class="chat-header">
       <div class="header-info">
-        <span class="chat-title">{{ session.name }}</span>
-        <span class="chat-status" v-if="session.online">Online</span>
+        <span class="chat-name">{{ sessionName }}</span>
+        <span class="chat-status" v-if="isGroup">({{ groupMemberCount }}人)</span>
       </div>
       <div class="header-actions">
-        <el-button link>
-          <el-icon :size="20"><Phone /></el-icon>
-        </el-button>
-        <el-button link>
-          <el-icon :size="20"><VideoCamera /></el-icon>
-        </el-button>
-        <el-button link @click="$emit('toggle-right-sidebar')">
-          <el-icon :size="20"><More /></el-icon>
-        </el-button>
+        <el-button circle icon="More" @click="$emit('toggle-right-sidebar')" />
       </div>
     </div>
 
-    <!-- Message Area -->
-    <el-scrollbar class="message-area" ref="scrollbarRef">
-      <div class="message-list">
-        <div 
-          v-for="(msg, index) in messages" 
-          :key="msg.id" 
-          class="message-row"
-          :class="{ 'message-mine': msg.isMine }"
-        >
-          <!-- Time Divider -->
-          <div v-if="showTime(msg, index)" class="time-divider">
-            <span>{{ formatTime(msg.timestamp) }}</span>
-          </div>
-
-          <div class="message-content-wrapper">
-            <el-avatar 
-              v-if="!msg.isMine" 
-              :size="36" 
-              :src="session.avatar" 
-              class="msg-avatar"
-            />
+    <!-- Message List -->
+    <div class="message-area custom-scrollbar" ref="msgListRef">
+        <div v-for="msg in messages" :key="msg.uuid || msg.id" class="message-row" :class="{ 'is-mine': isMine(msg) }">
+            <el-avatar :src="normalizeUrl(msg.send_avatar)" :size="36" class="msg-avatar">
+                {{ msg.send_name ? msg.send_name[0] : '?' }}
+            </el-avatar>
             
-            <div class="bubble-container">
-              <div class="message-bubble">
-                <span v-if="msg.type === 'text'">{{ msg.content }}</span>
-                <el-image 
-                  v-else-if="msg.type === 'image'" 
-                  :src="msg.content" 
-                  :preview-src-list="[msg.content]"
-                  class="msg-image"
-                />
-              </div>
-            </div>
+            <div class="msg-content-wrapper">
+                <div class="msg-sender" v-if="isGroup && !isMine(msg)">{{ msg.send_name }}</div>
+                
+                <!-- Text Message -->
+                <div class="msg-bubble" v-if="msg.type === 0 || msg.type === undefined">
+                    {{ msg.content }}
+                </div>
+                
+                <!-- Image Message -->
+                <div class="msg-image" v-else-if="msg.type === 1 || (msg.type === 2 && isImage(msg.file_type || msg.url))">
+                    <el-image 
+                        :src="normalizeUrl(msg.url)" 
+                        :preview-src-list="[normalizeUrl(msg.url)]"
+                        fit="cover"
+                        class="chat-image"
+                    />
+                </div>
 
-            <el-avatar 
-              v-if="msg.isMine" 
-              :size="36" 
-              :src="currentUserAvatar" 
-              class="msg-avatar"
-            />
-          </div>
+                <!-- File Message -->
+                <div class="msg-file" v-else-if="msg.type === 2">
+                    <div class="file-icon">
+                        <el-icon><Document /></el-icon>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">{{ msg.file_name || '未知文件' }}</div>
+                        <div class="file-size">{{ msg.file_size }}</div>
+                    </div>
+                    <a :href="normalizeUrl(msg.url)" target="_blank" class="download-btn">
+                        <el-icon><Download /></el-icon>
+                    </a>
+                </div>
+
+                 <!-- Call Message (Placeholder) -->
+                <div class="msg-bubble system" v-else-if="msg.type === 3">
+                    [通话消息]
+                </div>
+            </div>
         </div>
-      </div>
-    </el-scrollbar>
+    </div>
 
     <!-- Input Area -->
     <div class="input-area">
       <div class="toolbar">
-        <el-icon class="tool-icon"><Emoji /></el-icon>
-        <el-icon class="tool-icon"><Picture /></el-icon>
-        <el-icon class="tool-icon"><Folder /></el-icon>
+        <el-upload
+            class="upload-demo"
+            action="#"
+            :show-file-list="false"
+            :http-request="handleUpload"
+            :disabled="uploading"
+        >
+            <el-button circle icon="Folder" size="small" :loading="uploading" />
+        </el-upload>
+        <!-- Emoji placeholder -->
+        <el-button circle icon="Picture" size="small" @click="triggerImageUpload" />
       </div>
-      <div class="textarea-wrapper">
-        <textarea 
-          v-model="inputText" 
-          placeholder="输入消息..." 
-          @keydown.enter.prevent="handleSend"
-        ></textarea>
-      </div>
-      <div class="send-action">
-        <el-button type="primary" class="send-btn" @click="handleSend">发送</el-button>
+      
+      <el-input
+        v-model="inputText"
+        type="textarea"
+        :rows="3"
+        resize="none"
+        placeholder="输入消息..."
+        @keydown.enter.prevent="handleSend"
+      />
+      
+      <div class="send-actions">
+        <span class="tip">Enter 发送</span>
+        <el-button type="primary" round @click="handleSend" :disabled="!inputText.trim()">发送</el-button>
       </div>
     </div>
   </div>
-  <div class="empty-state" v-else>
-    <div class="empty-content">
-      <img src="https://cdni.iconscout.com/illustration/premium/thumb/chat-bubble-3392336-2826721.png" alt="No Chat" class="empty-img"/>
-      <p>选择一个会话开始聊天</p>
-    </div>
+  <div class="empty-window glass-panel" v-else>
+      <el-empty description="选择一个会话开始聊天" />
   </div>
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from 'vuex'
-import { Phone, VideoCamera, More, Picture, Folder } from '@element-plus/icons-vue'
-// Mock Emoji icon as it might not be in standard set or needs specific import, using star for now or finding closest
-import { Star as Emoji } from '@element-plus/icons-vue' 
+import { More, Document, Download, Folder, Picture } from '@element-plus/icons-vue'
+import { normalizeUrl, uploadFile } from '../../api/im'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps({
-  session: {
-    type: Object,
-    default: null
-  },
-  messages: {
-    type: Array,
-    default: () => []
-  }
+  session: Object,
+  messages: Array
 })
 
 const emit = defineEmits(['send-message', 'toggle-right-sidebar'])
+
 const store = useStore()
-
 const inputText = ref('')
-const scrollbarRef = ref(null)
+const msgListRef = ref(null)
+const uploading = ref(false)
 
-const currentUserAvatar = computed(() => {
-  return store.state.userInfo?.avatar || 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png'
+const isGroup = computed(() => {
+    // A2: 使用 peer_id 判断
+    if (props.session && props.session.peer_type) {
+        return props.session.peer_type === 'G'
+    }
+    return props.session && (props.session.group_id || (props.session.receive_id && props.session.receive_id.startsWith('G')))
 })
 
-const handleSend = () => {
-  if (!inputText.value.trim()) return
-  emit('send-message', inputText.value)
-  inputText.value = ''
+const sessionName = computed(() => {
+    // A2: 优先使用 peer_name
+    return props.session ? (props.session.peer_name || props.session.username || props.session.group_name) : ''
+})
+
+const groupMemberCount = computed(() => {
+    return 0 
+})
+
+const isMine = (msg) => {
+    return msg.send_id === store.state.userInfo.uuid
+}
+
+const isImage = (typeOrUrl) => {
+    if (!typeOrUrl) return false
+    const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+    return imgExts.some(ext => typeOrUrl.toLowerCase().includes(ext))
 }
 
 const scrollToBottom = () => {
-  nextTick(() => {
-    if (scrollbarRef.value) {
-      const wrap = scrollbarRef.value.wrapRef
-      wrap.scrollTop = wrap.scrollHeight
-    }
-  })
+    nextTick(() => {
+        if (msgListRef.value) {
+            msgListRef.value.scrollTop = msgListRef.value.scrollHeight
+        }
+    })
 }
 
 watch(() => props.messages, () => {
-  scrollToBottom()
+    scrollToBottom()
 }, { deep: true })
 
-const showTime = (current, index) => {
-  if (index === 0) return true
-  const prev = props.messages[index - 1]
-  return current.timestamp - prev.timestamp > 5 * 60 * 1000 // 5 mins
+watch(() => props.session, () => {
+    scrollToBottom()
+})
+
+const handleSend = () => {
+    if (!inputText.value.trim()) return
+    emit('send-message', {
+        type: 0,
+        content: inputText.value
+    })
+    inputText.value = ''
 }
 
-const formatTime = (ts) => {
-  const date = new Date(ts)
-  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+const handleUpload = async (options) => {
+    const { file } = options
+    uploading.value = true
+    try {
+        const formData = new FormData()
+        formData.append('file', file)
+        
+        const res = await uploadFile(formData)
+        
+        // A4: 优先使用后端返回的 url
+        let fileUrl = ''
+        if (res.data && (res.data.url || res.data.path || res.data.data)) {
+            // 尝试从常见字段获取
+             fileUrl = res.data.url || res.data.path || res.data.data
+             // 如果返回的是对象，尝试取 url 属性
+             if (typeof fileUrl === 'object' && fileUrl.url) {
+                 fileUrl = fileUrl.url
+             }
+        }
+
+        if (!fileUrl) {
+            // 降级：手动拼接
+            const fileName = file.name
+            fileUrl = `/static/files/${fileName}`
+        }
+        
+        // 兼容不同的成功状态码
+        if (res.data.code === 200 || res.data.code === 0) { 
+             const fileName = file.name
+             const fileType = file.type
+             
+             emit('send-message', {
+                 type: 2,
+                 url: fileUrl,
+                 file_name: fileName,
+                 file_size: (file.size / 1024).toFixed(2) + 'KB',
+                 file_type: fileType
+             })
+        } else {
+            ElMessage.error('上传失败')
+        }
+    } catch (e) {
+        ElMessage.error('上传出错')
+        console.error(e)
+    } finally {
+        uploading.value = false
+    }
+}
+
+const triggerImageUpload = () => {
+    document.querySelector('.upload-demo input').click()
 }
 </script>
 
@@ -155,181 +224,156 @@ const formatTime = (ts) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.5);
-  position: relative;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.empty-window {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.4);
 }
 
 .chat-header {
   height: 60px;
   padding: 0 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  backdrop-filter: blur(10px);
 }
 
-.chat-title {
-  font-size: 18px;
+.chat-name {
+  font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
-  margin-right: 10px;
-}
-
-.chat-status {
-  font-size: 12px;
-  color: #67c23a;
+  color: #303133;
 }
 
 .message-area {
   flex: 1;
   padding: 20px;
-}
-
-.message-list {
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding-bottom: 20px;
-}
-
-.time-divider {
-  text-align: center;
-  margin: 10px 0;
-}
-
-.time-divider span {
-  font-size: 12px;
-  color: #999;
-  background: rgba(0,0,0,0.05);
-  padding: 2px 8px;
-  border-radius: 10px;
 }
 
 .message-row {
   display: flex;
-  flex-direction: column;
-}
-
-.message-content-wrapper {
-  display: flex;
-  align-items: flex-start;
   gap: 10px;
-  max-width: 70%;
+  align-items: flex-start;
 }
 
-.message-row.message-mine {
-  align-items: flex-end;
-}
-
-.message-row.message-mine .message-content-wrapper {
+.message-row.is-mine {
   flex-direction: row-reverse;
 }
 
-.message-bubble {
-  padding: 10px 15px;
+.msg-content-wrapper {
+  max-width: 60%;
+  display: flex;
+  flex-direction: column;
+}
+
+.is-mine .msg-content-wrapper {
+  align-items: flex-end;
+}
+
+.msg-sender {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
+}
+
+.msg-bubble {
+  background: white;
+  padding: 10px 14px;
   border-radius: 12px;
+  border-top-left-radius: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
   font-size: 14px;
   line-height: 1.5;
-  position: relative;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
   word-break: break-all;
 }
 
-/* Receiver Bubble (Left) */
-.message-row:not(.message-mine) .message-bubble {
-  background: #fff;
-  color: #333;
-  border-top-left-radius: 2px;
-}
-
-/* Sender Bubble (Right) - Ink Style */
-.message-row.message-mine .message-bubble {
-  background: #2c3e50; /* Ink color */
-  color: #fff;
+.is-mine .msg-bubble {
+  background: #409EFF;
+  color: white;
+  border-top-left-radius: 12px;
   border-top-right-radius: 2px;
 }
 
-.msg-image {
-  max-width: 200px;
-  border-radius: 8px;
+.chat-image {
+    border-radius: 8px;
+    max-width: 200px;
+    border: 1px solid rgba(0,0,0,0.1);
 }
 
-/* Input Area */
+.msg-file {
+    background: white;
+    padding: 10px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 200px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.file-icon {
+    font-size: 24px;
+    color: #409EFF;
+}
+
+.file-info {
+    flex: 1;
+    overflow: hidden;
+}
+
+.file-name {
+    font-size: 14px;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-size {
+    font-size: 12px;
+    color: #999;
+}
+
+.download-btn {
+    color: #666;
+    cursor: pointer;
+}
+
+.download-btn:hover {
+    color: #409EFF;
+}
+
 .input-area {
-  height: 160px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-  padding: 10px 20px;
-  display: flex;
-  flex-direction: column;
-  background: rgba(255, 255, 255, 0.6);
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.5);
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .toolbar {
   display: flex;
-  gap: 15px;
+  gap: 10px;
   margin-bottom: 10px;
 }
 
-.tool-icon {
-  font-size: 20px;
-  color: #606266;
-  cursor: pointer;
-  transition: color 0.3s;
-}
-
-.tool-icon:hover {
-  color: #2c3e50;
-}
-
-.textarea-wrapper {
-  flex: 1;
-}
-
-textarea {
-  width: 100%;
-  height: 100%;
-  border: none;
-  background: transparent;
-  resize: none;
-  font-size: 14px;
-  font-family: inherit;
-  outline: none;
-  color: #333;
-}
-
-.send-action {
+.send-actions {
   display: flex;
   justify-content: flex-end;
-}
-
-.send-btn {
-  background-color: #2c3e50;
-  border-color: #2c3e50;
-  padding: 8px 25px;
-}
-
-.send-btn:hover {
-  background-color: #34495e;
-  border-color: #34495e;
-}
-
-.empty-state {
-  flex: 1;
-  display: flex;
   align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.3);
+  margin-top: 10px;
+  gap: 10px;
 }
 
-.empty-content {
-  text-align: center;
-  color: #999;
-}
-
-.empty-img {
-  width: 150px;
-  margin-bottom: 20px;
-  opacity: 0.5;
+.tip {
+  font-size: 12px;
+  color: #909399;
 }
 </style>

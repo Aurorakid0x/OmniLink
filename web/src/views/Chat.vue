@@ -1,6 +1,5 @@
 <template>
   <div class="chat-container">
-    <!-- Background Ink Layer (Consistent with Login) -->
     <div class="ink-bg-layer"></div>
 
     <div class="main-layout glass-card">
@@ -8,18 +7,30 @@
         v-model:activeTab="activeTab" 
       />
       
+      <!-- Session List Panel -->
       <SessionList 
         v-if="activeTab === 'chat'"
-        :sessions="sessions" 
-        :currentSessionId="currentSessionId"
         @select-session="handleSelectSession" 
+        @show-create-group="showCreateGroup = true"
       />
       
-      <!-- Placeholder for Contacts/Settings -->
+      <!-- Contact List Panel -->
+      <ContactList 
+        v-else-if="activeTab === 'contacts'"
+        @start-chat="handleStartChatFromContact"
+      />
+
+      <!-- Placeholder for Me/Settings -->
       <div v-else class="placeholder-panel glass-panel">
-        <el-empty :description="activeTab === 'contacts' ? '联系人功能开发中' : '设置功能开发中'" />
+        <div class="me-panel" v-if="activeTab === 'me'">
+             <el-avatar :src="normalizeUrl(userInfo.avatar)" :size="100" />
+             <h2>{{ userInfo.nickname }}</h2>
+             <p>ID: {{ userInfo.uuid }}</p>
+        </div>
+        <el-empty v-else description="功能开发中" />
       </div>
 
+      <!-- Chat Window -->
       <ChatWindow 
         :session="currentSession" 
         :messages="currentMessages"
@@ -27,6 +38,7 @@
         @toggle-right-sidebar="showRightSidebar = !showRightSidebar"
       />
 
+      <!-- Right Info Panel -->
       <transition name="slide-fade">
         <GroupInfo 
           v-if="showRightSidebar && currentSession" 
@@ -38,111 +50,125 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useStore } from 'vuex'
 import SideBar from '../components/chat/SideBar.vue'
 import SessionList from '../components/chat/SessionList.vue'
+import ContactList from '../components/chat/ContactList.vue'
 import ChatWindow from '../components/chat/ChatWindow.vue'
 import GroupInfo from '../components/chat/GroupInfo.vue'
+import { getMessageList, getGroupMessageList, normalizeUrl } from '../api/im'
+import { normalizeSession } from '../utils/imNormalize'
+
+const store = useStore()
 
 // State
 const activeTab = ref('chat')
-const currentSessionId = ref(1)
 const showRightSidebar = ref(false)
+const showCreateGroup = ref(false)
 
-// Mock Data
-const sessions = ref([
-  { 
-    id: 1, 
-    name: 'OmniLink 官方交流群', 
-    avatar: 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png', 
-    lastMsg: '欢迎加入 OmniLink!', 
-    time: '10:30', 
-    unread: 2,
-    online: true 
-  },
-  { 
-    id: 2, 
-    name: '产品经理', 
-    avatar: 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png', 
-    lastMsg: '需求文档已经更新了，看一下', 
-    time: '09:15', 
-    unread: 0,
-    online: false 
-  },
-  { 
-    id: 3, 
-    name: '前端组', 
-    avatar: 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png', 
-    lastMsg: 'Code Review 时间定了吗？', 
-    time: '昨天', 
-    unread: 5,
-    online: true 
-  }
-])
-
-const messagesMap = ref({
-  1: [
-    { id: 1, type: 'text', content: '大家好，欢迎来到 OmniLink!', isMine: false, timestamp: Date.now() - 3600000 },
-    { id: 2, type: 'text', content: '这个界面风格我很喜欢，很有质感。', isMine: true, timestamp: Date.now() - 3500000 },
-    { id: 3, type: 'image', content: 'https://fuss10.elemecdn.com/e/5d/4a731a90594a4af544c0c25941171jpeg.jpeg', isMine: false, timestamp: Date.now() - 3400000 },
-  ],
-  2: [
-    { id: 1, type: 'text', content: '需求文档更新了', isMine: false, timestamp: Date.now() - 86400000 },
-  ],
-  3: []
-})
-
-// Computed
+const userInfo = computed(() => store.state.userInfo)
+const currentSessionId = computed(() => store.state.currentSessionId)
 const currentSession = computed(() => {
-  return sessions.value.find(s => s.id === currentSessionId.value)
+    return store.state.sessionList.find(s => s.session_id === currentSessionId.value)
 })
-
-const currentMessages = computed(() => {
-  return messagesMap.value[currentSessionId.value] || []
-})
+const currentMessages = computed(() => store.getters.currentMessages)
 
 // Logic
 const handleSelectSession = (session) => {
-  currentSessionId.value = session.id
-  // Clear unread
-  const s = sessions.value.find(s => s.id === session.id)
-  if (s) s.unread = 0
+  // A2: 使用归一化后的 peer_id
+  const peerId = session.peer_id
+  store.commit('setCurrentSession', { 
+      sessionId: session.session_id, 
+      peerId: peerId 
+  })
+  
+  // 加载历史消息
+  loadHistoryMessages(peerId, session)
 }
 
-const handleSendMessage = (text) => {
-  if (!currentSessionId.value) return
-  
-  const newMsg = {
-    id: Date.now(),
-    type: 'text',
-    content: text,
-    isMine: true,
-    timestamp: Date.now()
-  }
-  
-  if (!messagesMap.value[currentSessionId.value]) {
-    messagesMap.value[currentSessionId.value] = []
-  }
-  messagesMap.value[currentSessionId.value].push(newMsg)
-
-  // Mock Auto Reply
-  setTimeout(() => {
-    const replyMsg = {
-      id: Date.now() + 1,
-      type: 'text',
-      content: `自动回复: 我收到了 "${text}"`,
-      isMine: false,
-      timestamp: Date.now()
+const handleStartChatFromContact = (data) => {
+    // data: { session_id, receive_id, ... }
+    // 切换到 chat tab
+    activeTab.value = 'chat'
+    
+    // 检查 sessionList 是否已有该会话
+    const exist = store.state.sessionList.find(s => s.session_id === data.session_id)
+    if (exist) {
+        handleSelectSession(exist)
+    } else {
+        // A1: 修复 loadSessions 调用
+        store.dispatch('loadSessions').then(() => {
+             // 重新获取
+             const reExist = store.state.sessionList.find(s => s.session_id === data.session_id)
+             if (reExist) {
+                 handleSelectSession(reExist)
+             } else {
+                 // 手动 commit 一个归一化的 session (优雅降级)
+                 const rawSession = {
+                     session_id: data.session_id,
+                     user_id: data.receive_id.startsWith('U') ? data.receive_id : null,
+                     group_id: data.receive_id.startsWith('G') ? data.receive_id : null,
+                     peer_id: data.receive_id,
+                     username: data.username,
+                     group_name: data.group_name,
+                     avatar: data.avatar,
+                     updated_at: new Date().toISOString()
+                 }
+                 const newSession = normalizeSession(rawSession)
+                 const newList = [newSession, ...store.state.sessionList]
+                 store.commit('setSessionList', newList)
+                 handleSelectSession(newSession)
+             }
+        })
     }
-    messagesMap.value[currentSessionId.value].push(replyMsg)
-  }, 1000)
 }
 
-// WebSocket Placeholder
+const loadHistoryMessages = async (peerId, session) => {
+    try {
+        let res
+        if (peerId.startsWith('G')) {
+            res = await getGroupMessageList({ group_id: peerId })
+        } else {
+            res = await getMessageList({ 
+                user_one_id: userInfo.value.uuid,
+                user_two_id: peerId
+            })
+        }
+        if (res.data && res.data.data) {
+            store.commit('setHistoryMessages', { peerId, messages: res.data.data })
+        }
+    } catch (e) {
+        console.error('Fetch history failed', e)
+    }
+}
+
+const handleSendMessage = (payload) => {
+    // payload: { type, content, url, ... }
+    if (!currentSession.value) return
+    
+    const peerId = currentSession.value.peer_id
+    
+    const msgData = {
+        session_id: currentSessionId.value,
+        type: payload.type,
+        content: payload.content || '',
+        url: payload.url || '',
+        send_id: userInfo.value.uuid,
+        send_name: userInfo.value.nickname,
+        send_avatar: userInfo.value.avatar, 
+        receive_id: peerId,
+        file_name: payload.file_name || '',
+        file_size: payload.file_size || '',
+        file_type: payload.file_type || ''
+    }
+    
+    store.dispatch('sendMessage', msgData)
+}
+
+// WebSocket Lifecycle
 onMounted(() => {
-  console.log('Initialize WebSocket connection here...')
-  // const ws = new WebSocket('ws://...')
-  // ws.onmessage = (event) => { ... }
+  store.dispatch('connectWebSocket')
 })
 </script>
 
@@ -162,7 +188,6 @@ onMounted(() => {
   position: relative;
 }
 
-/* Ink Background Layer */
 .ink-bg-layer {
   position: absolute;
   top: 0;
@@ -201,6 +226,13 @@ onMounted(() => {
   justify-content: center;
   border-right: 1px solid rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.3);
+}
+
+.me-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
 }
 
 /* Transition for Right Sidebar */

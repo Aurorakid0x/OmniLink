@@ -1,62 +1,102 @@
 <template>
   <div class="session-list glass-panel">
-    <div class="search-bar">
-      <el-input
-        v-model="searchQuery"
-        placeholder="搜索"
-        class="custom-search-input"
-        :prefix-icon="Search"
+    <div class="header">
+      <el-input 
+        v-model="searchKey" 
+        placeholder="搜索会话" 
+        prefix-icon="Search"
+        clearable 
+        class="search-input"
       />
+      <el-button circle icon="Plus" class="add-btn" @click="$emit('show-create-group')" />
     </div>
 
-    <el-scrollbar class="list-container">
+    <div class="list-content custom-scrollbar">
+      <el-empty v-if="displayList.length === 0" description="暂无会话" :image-size="60" />
+      
       <div 
-        v-for="session in filteredSessions" 
-        :key="session.id"
+        v-for="item in displayList" 
+        :key="item.session_id" 
         class="session-item"
-        :class="{ active: currentSessionId === session.id }"
-        @click="$emit('select-session', session)"
+        :class="{ active: currentSessionId === item.session_id }"
+        @click="handleSelect(item)"
       >
         <div class="avatar-wrapper">
-          <el-avatar :size="44" :src="session.avatar" shape="square" class="session-avatar" />
-          <div v-if="session.unread > 0" class="unread-badge">{{ session.unread }}</div>
+          <el-avatar :src="normalizeUrl(item.peer_avatar)" shape="square" :size="44">
+            {{ (item.peer_name || '?')[0] }}
+          </el-avatar>
+          <span class="unread-dot" v-if="getUnread(item) > 0">{{ getUnread(item) }}</span>
         </div>
         
-        <div class="session-info">
-          <div class="top-row">
-            <span class="nickname">{{ session.name }}</span>
-            <span class="time">{{ session.time }}</span>
+        <div class="item-info">
+          <div class="item-top">
+            <span class="name">{{ item.peer_name }}</span>
+            <span class="time">{{ formatTime(item.updated_at) }}</span>
           </div>
-          <div class="bottom-row">
-            <span class="last-msg">{{ session.lastMsg }}</span>
+          <div class="item-msg text-ellipsis">
+            {{ item.last_msg || '点击开始聊天' }}
           </div>
         </div>
       </div>
-    </el-scrollbar>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { Search } from '@element-plus/icons-vue'
+import { ref, computed, onMounted } from 'vue'
+import { useStore } from 'vuex'
+import { Search, Plus } from '@element-plus/icons-vue'
+import { normalizeUrl } from '../../api/im'
 
-const props = defineProps({
-  sessions: {
-    type: Array,
-    default: () => []
-  },
-  currentSessionId: {
-    type: [String, Number],
-    default: null
-  }
+const emit = defineEmits(['select-session', 'show-create-group'])
+
+const store = useStore()
+const searchKey = ref('')
+const loading = ref(false)
+
+const currentSessionId = computed(() => store.state.currentSessionId)
+const sessionList = computed(() => store.state.sessionList)
+const unreadMap = computed(() => store.state.unreadMap)
+
+const displayList = computed(() => {
+  if (!searchKey.value) return sessionList.value
+  return sessionList.value.filter(item => {
+    const name = item.peer_name || ''
+    return name.toLowerCase().includes(searchKey.value.toLowerCase())
+  })
 })
 
-const emit = defineEmits(['select-session'])
-const searchQuery = ref('')
+const getUnread = (session) => {
+    // A6: 基于 peer_id
+    const peerId = session.peer_id
+    return unreadMap.value[peerId] || 0
+}
 
-const filteredSessions = computed(() => {
-  if (!searchQuery.value) return props.sessions
-  return props.sessions.filter(s => s.name.includes(searchQuery.value))
+const formatTime = (timeStr) => {
+    if (!timeStr) return ''
+    const date = new Date(timeStr)
+    const now = new Date()
+    if (date.toDateString() === now.toDateString()) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+    return date.toLocaleDateString()
+}
+
+const handleSelect = (session) => {
+    emit('select-session', session)
+}
+
+const loadSessions = async () => {
+    loading.value = true
+    try {
+        await store.dispatch('loadSessions')
+    } finally {
+        loading.value = false
+    }
+}
+
+onMounted(() => {
+    loadSessions()
 })
 </script>
 
@@ -70,106 +110,93 @@ const filteredSessions = computed(() => {
   border-right: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.search-bar {
+.header {
   padding: 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
-/* Customize Element Input for Glassmorphism */
-:deep(.custom-search-input .el-input__wrapper) {
-  background-color: rgba(255, 255, 255, 0.5);
+.search-input :deep(.el-input__wrapper) {
+  background: rgba(255, 255, 255, 0.6);
   box-shadow: none;
   border-radius: 20px;
-  padding: 4px 15px;
-  transition: all 0.3s;
 }
 
-:deep(.custom-search-input .el-input__wrapper.is-focus) {
-  background-color: rgba(255, 255, 255, 0.8);
-  box-shadow: 0 0 0 1px #2c3e50 inset;
+.add-btn {
+    background: transparent;
+    border: 1px solid rgba(0,0,0,0.1);
 }
 
-.list-container {
+.list-content {
   flex: 1;
-  padding: 0 10px;
+  overflow-y: auto;
 }
 
 .session-item {
+  padding: 15px 20px;
   display: flex;
-  padding: 15px 10px;
-  border-radius: 12px;
+  align-items: center;
+  gap: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  margin-bottom: 5px;
+  transition: all 0.2s;
 }
 
 .session-item:hover {
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .session-item.active {
-  background: rgba(44, 62, 80, 0.08); /* Light dark tint */
-  backdrop-filter: blur(5px);
+  background: rgba(64, 158, 255, 0.15);
+  border-right: 3px solid #409EFF;
 }
 
 .avatar-wrapper {
   position: relative;
-  margin-right: 12px;
 }
 
-.session-avatar {
-  border-radius: 10px;
-}
-
-.unread-badge {
+.unread-dot {
   position: absolute;
   top: -5px;
   right: -5px;
-  background-color: #f56c6c;
+  background: #f56c6c;
   color: white;
   font-size: 10px;
-  height: 16px;
+  padding: 0 5px;
+  border-radius: 10px;
   min-width: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid #fff;
+  text-align: center;
+  border: 1px solid #fff;
 }
 
-.session-info {
+.item-info {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  overflow: hidden;
+  min-width: 0;
 }
 
-.top-row {
+.item-top {
   display: flex;
   justify-content: space-between;
-  align-items: center;
   margin-bottom: 4px;
 }
 
-.nickname {
-  font-weight: 600;
-  color: #2c3e50;
+.name {
+  font-weight: 500;
+  color: #303133;
   font-size: 14px;
 }
 
 .time {
   font-size: 12px;
-  color: #999;
+  color: #909399;
 }
 
-.bottom-row {
-  display: flex;
-}
-
-.last-msg {
+.item-msg {
   font-size: 12px;
-  color: #666;
+  color: #909399;
+}
+
+.text-ellipsis {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -46,11 +46,10 @@
               >
                 登 录
               </el-button>
+              <div class="extra-links">
+                <router-link to="/register" class="link-text">注册新账号</router-link>
+              </div>
             </el-form-item>
-          </div>
-          
-          <div class="form-footer">
-            <el-button link class="register-link" @click="goToRegister">注册新账号</el-button>
           </div>
         </el-form>
       </div>
@@ -60,14 +59,14 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { useStore } from 'vuex'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { useStore } from 'vuex'
 import { User, Lock } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import request from '../../utils/request'
 
-const store = useStore()
 const router = useRouter()
+const store = useStore()
 const loginFormRef = ref(null)
 const loading = ref(false)
 
@@ -76,17 +75,9 @@ const loginForm = reactive({
   password: ''
 })
 
-// 验证规则
 const rules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, max: 20, message: '用户名长度应在 3 到 20 个字符之间', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_]+$/, message: '用户名只能包含字母、数字和下划线', trigger: 'blur' }
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码长度不能少于 6 位', trigger: 'blur' }
-  ]
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
 const handleLogin = async () => {
@@ -96,71 +87,58 @@ const handleLogin = async () => {
     if (valid) {
       loading.value = true
       try {
-        // 使用封装的 request，不需要手动拼接 backendUrl，baseURL 已在 request.js 中配置
-        // 但为了兼容 store 中的配置（如果将来动态修改），也可以保持原样，
-        // 不过这里建议直接用 request.post('/login')
         const response = await request.post('/login', {
           username: loginForm.username,
           password: loginForm.password
         })
 
-        // axios 响应结构：response.data 是后端返回的 JSON
-        // 后端返回结构：{ code: 200, message: "Success", data: { user: {...}, token: "..." } }
-        // 或者 data 直接包含 token 和 user 字段
-        
         const resData = response.data
         if (resData.code === 200) {
-           // 假设后端返回 data 结构为 { token: "...", ...userInfo } 
-           // 或者 { user: {...}, token: "..." }
-           // 根据之前的 user_info_service.go 代码：
-           // LoginRespond 包含 Uuid, Username... 和 Token 字段，是扁平的
            const loginData = resData.data
            
            if (loginData && loginData.token) {
              store.commit('setToken', loginData.token)
-             // 移除 token 字段后再保存 userInfo，或者直接保存也没关系
              store.commit('setUserInfo', loginData)
              ElMessage.success('登录成功')
+             
+             // 建立 WebSocket 连接
+             store.dispatch('connectWebSocket')
+             
              router.push('/chat')
            } else {
              ElMessage.error('登录异常：未返回 Token')
            }
         } else {
-           ElMessage.error(resData.message || '登录失败')
+          ElMessage.error(resData.message || '登录失败')
         }
       } catch (error) {
         console.error(error)
-        // 错误已在拦截器处理一部分，这里可以不再重复处理，或者处理特定逻辑
       } finally {
         loading.value = false
       }
     }
   })
 }
-
-const goToRegister = () => {
-  router.push('/register')
-}
 </script>
 
 <style scoped>
-/* 引入行书/书法字体 */
-@import url('https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Zhi+Mang+Xing&display=swap');
-
+/* Reuse existing styles or add new ones */
 .login-container {
-  min-height: 100vh;
-  width: 100%;
-  position: relative;
-  overflow: hidden;
-  /* 背景：黑白油墨国画风格 */
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background-color: #f5f7fa;
+  /* Add gradients similar to Chat.vue */
   background-image: 
     radial-gradient(at 10% 10%, rgba(0,0,0,0.08) 0px, transparent 50%),
     radial-gradient(at 90% 90%, rgba(0,0,0,0.05) 0px, transparent 50%),
     linear-gradient(135deg, #ffffff 0%, #e6e9f0 100%);
+  overflow: hidden;
+  position: relative;
 }
 
-/* 模拟水墨晕染层 */
 .ink-bg-layer {
   position: absolute;
   top: 0;
@@ -178,198 +156,90 @@ const goToRegister = () => {
 
 .content-wrapper {
   position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100vh;
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end; /* 让内容靠下，方便卡片遮挡标题 */
   align-items: center;
-  padding-bottom: 15vh; /* 底部留白，控制卡片位置 */
+  gap: 30px;
 }
 
-/* 标题区域 */
 .title-section {
-  position: absolute;
-  top: 45%; /* 标题整体位置偏上 */
-  left: 50%;
-  transform: translate(-50%, -50%);
   text-align: center;
-  width: 100%;
-  z-index: 0; /* 在卡片下方 */
-  pointer-events: none; /* 不阻挡点击 */
 }
 
 .main-title {
-  /* 字体设置：行书/书法感 */
-  font-family: 'Ma Shan Zheng', 'Zhi Mang Xing', 'STXingkai', '华文行楷', cursive;
-  /* 巨大尺寸，铺满屏幕 */
-  font-size: 25vw; 
-  line-height: 1;
+  font-size: 3rem;
+  font-weight: 200;
+  color: #303133;
+  letter-spacing: 4px;
   margin: 0;
-  padding: 0;
-  white-space: nowrap;
-  
-  /* 泼墨质感：深色渐变 + 纹理 */
-  color: transparent;
-  background: linear-gradient(180deg, #2c3e50 0%, #000000 60%, #434343 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  
-  /* 增加墨迹晕染的模糊感 */
-  filter: blur(0.5px) contrast(120%);
-  opacity: 0.85;
-  
-  /* 墨水滴落/流动动画感 (轻微浮动) */
-  animation: float-ink 8s ease-in-out infinite;
-}
-
-@keyframes float-ink {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-10px) scale(1.02); }
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
 .sub-title {
-  font-family: 'Noto Serif SC', serif;
-  font-size: 1.5rem;
-  color: #555;
-  letter-spacing: 1em;
-  margin-top: -2vw; /* 紧贴大标题底部 */
-  font-weight: bold;
-  opacity: 0.6;
+  font-size: 1rem;
+  color: #909399;
+  letter-spacing: 8px;
+  margin-top: 10px;
+  font-weight: 300;
 }
 
-/* 玻璃卡片 */
 .glass-card {
-  position: relative;
-  z-index: 10; /* 确保在标题上方 */
-  width: 90%;
-  max-width: 900px;
-  
-  /* 玻璃拟态：半透明，稍微厚重一点以遮挡文字 */
-  background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(25px);
-  -webkit-backdrop-filter: blur(25px);
-  
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-  border-radius: 60px; /* 更大的圆角 */
-  padding: 30px 60px;
-  
-  /* 关键：稍微上移，遮挡住标题底部一点点 */
-  margin-bottom: 5vh; 
-  transform: translateY(0);
-  transition: all 0.4s ease;
+  width: 380px;
+  padding: 40px;
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1);
+  border-radius: 20px;
 }
 
-.glass-card:hover {
-  background: rgba(255, 255, 255, 0.8);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
-  transform: translateY(-5px);
-}
-
-.form-body {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.custom-input {
-  flex: 1;
-  margin-bottom: 0 !important;
-}
-
-/* 输入框内部样式 */
-:deep(.el-input__wrapper) {
-  background-color: transparent; /* 透明以透出玻璃感 */
-  box-shadow: none !important;
-  border-bottom: 2px solid rgba(0, 0, 0, 0.2);
-  border-radius: 0;
-  padding: 10px 5px;
+.custom-input :deep(.el-input__wrapper) {
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: none;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  height: 44px;
   transition: all 0.3s;
 }
 
-:deep(.el-input__wrapper.is-focus) {
-  border-bottom: 2px solid #000; /* 聚焦变为纯黑，呼应水墨 */
+.custom-input :deep(.el-input__wrapper:hover),
+.custom-input :deep(.el-input__wrapper.is-focus) {
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
-:deep(.el-input__inner) {
-  font-size: 1.2rem;
-  color: #1a1a1a;
-  font-weight: 500;
-}
-
-/* 按钮样式：黑白风格中的点缀，或者保持黑白 */
 .login-button {
   width: 100%;
-  height: 50px;
-  border-radius: 30px;
-  font-size: 1.1rem;
-  font-weight: bold;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 16px;
+  letter-spacing: 2px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border: none;
-  /* 黑色油墨按钮 */
-  background: linear-gradient(135deg, #2b2b2b 0%, #000000 100%);
-  color: #fff;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(118, 75, 162, 0.3);
+  transition: all 0.3s;
 }
 
 .login-button:hover {
-  background: linear-gradient(135deg, #000000 0%, #2b2b2b 100%);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-  transform: scale(1.02);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(118, 75, 162, 0.4);
 }
 
-.form-footer {
-  text-align: center;
+.extra-links {
   margin-top: 15px;
+  text-align: center;
 }
 
-.register-link {
-  color: #666;
-  font-size: 0.9rem;
-  font-weight: 500;
+.link-text {
+  color: #606266;
+  font-size: 14px;
+  text-decoration: none;
+  transition: color 0.3s;
 }
 
-.register-link:hover {
-  color: #000;
-}
-
-/* 响应式适配 */
-@media screen and (max-width: 768px) {
-  .main-title {
-    font-size: 25vw; /* 手机上更大 */
-    writing-mode: vertical-rl; /* 手机上尝试竖排，或者保持横排但换行 */
-    text-orientation: upright;
-    writing-mode: horizontal-tb; /* 保持横排比较安全 */
-    white-space: normal;
-    line-height: 1.1;
-  }
-  
-  .title-section {
-    top: 35%; /* 手机上标题位置 */
-  }
-
-  .content-wrapper {
-    padding-bottom: 5vh;
-  }
-
-  .glass-card {
-    padding: 30px 20px;
-    width: 92%;
-    border-radius: 30px;
-    margin-bottom: 20px;
-  }
-
-  .form-body {
-    flex-direction: column;
-    gap: 20px;
-  }
-
-  .custom-input, .action-item {
-    width: 100%;
-  }
+.link-text:hover {
+  color: #409EFF;
 }
 </style>
