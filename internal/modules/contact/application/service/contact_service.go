@@ -20,6 +20,7 @@ type ContactService interface {
 	GetUserList(req contactRequest.GetUserListRequest) ([]contactRespond.UserListItem, error)
 	GetContactInfo(req contactRequest.GetContactInfoRequest) (*contactRespond.GetContactInfoRespond, error)
 	ApplyContact(req contactRequest.ApplyContactRequest) (*contactRespond.ApplyContactRespond, error)
+	GetNewContactList(req contactRequest.GetNewContactListRequest) ([]contactRespond.NewContactApplyItem, error)
 }
 
 type contactServiceImpl struct {
@@ -246,4 +247,83 @@ func (s *contactServiceImpl) ApplyContact(req contactRequest.ApplyContactRequest
 	}
 
 	return &contactRespond.ApplyContactRespond{ApplyId: newApply.Uuid}, nil
+}
+
+func (s *contactServiceImpl) GetNewContactList(req contactRequest.GetNewContactListRequest) ([]contactRespond.NewContactApplyItem, error) {
+	if req.OwnerId == "" {
+		return nil, xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
+	}
+
+	applies, err := s.applyRepo.ListPendingAppliesByContactID(req.OwnerId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+	if len(applies) == 0 {
+		return []contactRespond.NewContactApplyItem{}, nil
+	}
+
+	userIDs := make([]string, 0, len(applies))
+	seen := make(map[string]struct{}, len(applies))
+	for _, a := range applies {
+		if a.ContactType != 0 {
+			continue
+		}
+		if a.UserId == "" {
+			continue
+		}
+		if _, ok := seen[a.UserId]; ok {
+			continue
+		}
+		seen[a.UserId] = struct{}{}
+		userIDs = append(userIDs, a.UserId)
+	}
+
+	briefs, err := s.userRepo.GetUserBriefByUUIDs(userIDs)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+	briefMap := make(map[string]struct {
+		username string
+		nickname string
+		avatar   string
+	}, len(briefs))
+	for _, b := range briefs {
+		briefMap[b.Uuid] = struct {
+			username string
+			nickname string
+			avatar   string
+		}{
+			username: b.Username,
+			nickname: b.Nickname,
+			avatar:   b.Avatar,
+		}
+	}
+
+	out := make([]contactRespond.NewContactApplyItem, 0, len(applies))
+	for _, a := range applies {
+		if a.ContactType != 0 {
+			continue
+		}
+		b, ok := briefMap[a.UserId]
+		item := contactRespond.NewContactApplyItem{
+			Uuid:        a.Uuid,
+			UserId:      a.UserId,
+			Username:    "",
+			Nickname:    "",
+			Avatar:      "",
+			Message:     a.Message,
+			Status:      a.Status,
+			LastApplyAt: a.LastApplyAt.Format("2006-01-02 15:04:05"),
+		}
+		if ok {
+			item.Username = b.username
+			item.Nickname = b.nickname
+			item.Avatar = b.avatar
+		}
+		out = append(out, item)
+	}
+
+	return out, nil
 }

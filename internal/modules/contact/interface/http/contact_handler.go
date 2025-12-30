@@ -65,3 +65,19 @@ func (h *ContactHandler) ApplyContact(c *gin.Context) {
 	data, err := h.svc.ApplyContact(req)
 	back.Result(c, data, err)
 }
+
+func (h *ContactHandler) GetNewContactList(c *gin.Context) {
+	var req contactRequest.GetNewContactListRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	data, err := h.svc.GetNewContactList(req)
+	back.Result(c, data, err)
+}

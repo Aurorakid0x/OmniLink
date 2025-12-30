@@ -27,6 +27,18 @@ func (r *contactApplyRepositoryImpl) GetContactApplyByUserIDAndContactID(userID 
 	return &apply, nil
 }
 
+func (r *contactApplyRepositoryImpl) ListPendingAppliesByContactID(contactID string) ([]entity.ContactApply, error) {
+	var applies []entity.ContactApply
+	err := r.db.
+		Where("contact_id = ? AND status = 0", contactID).
+		Order("last_apply_at DESC").
+		Find(&applies).Error
+	if err != nil {
+		return nil, err
+	}
+	return applies, nil
+}
+
 func (r *contactApplyRepositoryImpl) CreateContactApply(apply *entity.ContactApply) error {
 	return r.db.Create(apply).Error
 }
