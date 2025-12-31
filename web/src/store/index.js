@@ -217,6 +217,7 @@ export default createStore({
 
     // 初始化并连接 WebSocket
     connectWebSocket({ state, commit, dispatch }) {
+        if (import.meta.env.VITE_DISABLE_WS === 'true') return
         if (state.socket && state.socket.readyState === WebSocket.OPEN) return
         if (!state.userInfo || !state.userInfo.uuid) return
 
