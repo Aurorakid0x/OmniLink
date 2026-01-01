@@ -125,16 +125,16 @@ const handleChat = async (item) => {
     try {
         const checkRes = await checkOpenSessionAllowed({ send_id: sendId, receive_id: receiveId })
         if (checkRes.data.code === 200 && checkRes.data.data === true) {
-            // 打开会话获取 SessionID
             const sessionRes = await openSession({ send_id: sendId, receive_id: receiveId })
             if (sessionRes.data.code === 200) {
-                const sessionId = sessionRes.data.data // 这里假设直接返回 sessionId 字符串，参考 KamaChat
+                const sess = sessionRes.data.data
+                const sessionId = sess && sess.session_id ? sess.session_id : ''
                 emit('start-chat', {
                     session_id: sessionId,
-                    receive_id: receiveId, // 补充信息，用于前端定位
-                    username: item.user_name,
+                    receive_id: receiveId,
+                    username: (sess && sess.peer_name) ? sess.peer_name : item.user_name,
                     group_name: item.group_name,
-                    avatar: item.avatar
+                    avatar: (sess && sess.peer_avatar) ? sess.peer_avatar : item.avatar
                 })
             }
         } else {

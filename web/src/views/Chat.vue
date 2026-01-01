@@ -36,6 +36,7 @@
         :messages="currentMessages"
         @send-message="handleSendMessage"
         @toggle-right-sidebar="showRightSidebar = !showRightSidebar"
+        @load-more="handleLoadMore"
       />
 
       <!-- Right Info Panel -->
@@ -50,15 +51,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useStore } from 'vuex'
 import SideBar from '../components/chat/SideBar.vue'
 import SessionList from '../components/chat/SessionList.vue'
 import ContactList from '../components/chat/ContactList.vue'
 import ChatWindow from '../components/chat/ChatWindow.vue'
 import GroupInfo from '../components/chat/GroupInfo.vue'
-import { getMessageList, getGroupMessageList, normalizeUrl } from '../api/im'
+import { getMessageList, normalizeUrl } from '../api/im'
 import { normalizeSession } from '../utils/imNormalize'
+
+const HISTORY_PAGE_SIZE = 20
 
 const store = useStore()
 
@@ -74,17 +77,22 @@ const currentSession = computed(() => {
 })
 const currentMessages = computed(() => store.getters.currentMessages)
 
+// History paging (per peer)
+const historyPageMap = ref({})
+const historyNoMoreMap = ref({})
+
 // Logic
 const handleSelectSession = (session) => {
-  // A2: 使用归一化后的 peer_id
   const peerId = session.peer_id
   store.commit('setCurrentSession', { 
       sessionId: session.session_id, 
       peerId: peerId 
   })
-  
-  // 加载历史消息
-  loadHistoryMessages(peerId, session)
+
+  historyPageMap.value[peerId] = 1
+  historyNoMoreMap.value[peerId] = false
+
+  loadHistoryMessages(peerId, 1, false)
 }
 
 const handleStartChatFromContact = (data) => {
@@ -124,23 +132,41 @@ const handleStartChatFromContact = (data) => {
     }
 }
 
-const loadHistoryMessages = async (peerId, session) => {
+const loadHistoryMessages = async (peerId, page, prepend) => {
     try {
-        let res
-        if (peerId.startsWith('G')) {
-            res = await getGroupMessageList({ group_id: peerId })
+        const res = await getMessageList({
+            user_one_id: userInfo.value.uuid,
+            user_two_id: peerId,
+            page,
+            page_size: HISTORY_PAGE_SIZE,
+        })
+
+        const list = (res.data && res.data.data) ? res.data.data : []
+        if (prepend) {
+            store.commit('prependHistoryMessages', { peerId, messages: list })
         } else {
-            res = await getMessageList({ 
-                user_one_id: userInfo.value.uuid,
-                user_two_id: peerId
-            })
+            store.commit('setHistoryMessages', { peerId, messages: list })
         }
-        if (res.data && res.data.data) {
-            store.commit('setHistoryMessages', { peerId, messages: res.data.data })
+
+        if (!list || list.length < HISTORY_PAGE_SIZE) {
+            historyNoMoreMap.value[peerId] = true
         }
     } catch (e) {
         console.error('Fetch history failed', e)
     }
+}
+
+const handleLoadMore = async () => {
+    if (!currentSession.value) return
+    const peerId = currentSession.value.peer_id
+    if (!peerId) return
+    if (historyNoMoreMap.value[peerId]) return
+
+    const curPage = historyPageMap.value[peerId] || 1
+    const nextPage = curPage + 1
+    historyPageMap.value[peerId] = nextPage
+
+    await loadHistoryMessages(peerId, nextPage, true)
 }
 
 const handleSendMessage = (payload) => {

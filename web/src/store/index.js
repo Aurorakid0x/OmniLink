@@ -1,5 +1,5 @@
 import { createStore } from 'vuex'
-import { normalizeUrl, getSessionList, getNewContactList } from '../api/im'
+import { normalizeUrl, getUserSessionList, getNewContactList } from '../api/im'
 import { normalizeSession, normalizeIncomingMessage } from '../utils/imNormalize'
 import { ElNotification } from 'element-plus'
 
@@ -165,12 +165,15 @@ export default createStore({
         }
     },
     setHistoryMessages(state, { peerId, messages }) {
-        // 历史消息也需要归一化吗？通常后端返回的是标准 Message 结构
-        // 但为了保险，也可以 map 一下。这里假设历史消息接口返回结构较标准。
-        // 为了统一，我们也可以在这里调用 normalizeIncomingMessage
         if (!messages) return
         const normalized = messages.map(m => normalizeIncomingMessage(m, state.userInfo?.uuid))
         state.messageMap[peerId] = normalized
+    },
+    prependHistoryMessages(state, { peerId, messages }) {
+        if (!messages) return
+        const normalized = messages.map(m => normalizeIncomingMessage(m, state.userInfo?.uuid))
+        const cur = state.messageMap[peerId] || []
+        state.messageMap[peerId] = normalized.concat(cur)
     },
     updateContactInfo(state, { id, info }) {
         state.contactMap[id] = info
@@ -185,21 +188,12 @@ export default createStore({
         if (!state.userInfo || !state.userInfo.uuid) return
         try {
             const ownerId = state.userInfo.uuid
-            const [userSessionsRes, groupSessionsRes] = await getSessionList(ownerId)
-            
-            let list = []
-            // 优雅降级：接口可能报错或返回空
-            if (userSessionsRes && userSessionsRes.data && userSessionsRes.data.data) {
-                list = list.concat(userSessionsRes.data.data)
-            }
-            if (groupSessionsRes && groupSessionsRes.data && groupSessionsRes.data.data) {
-                list = list.concat(groupSessionsRes.data.data)
-            }
-            
+            const userSessionsRes = await getUserSessionList(ownerId)
+
+            const list = (userSessionsRes && userSessionsRes.data && userSessionsRes.data.data) ? userSessionsRes.data.data : []
             commit('setSessionList', list)
         } catch (e) {
             console.error('Failed to load sessions', e)
-            // 不 throw，仅记录，避免阻塞 UI
         }
     },
 

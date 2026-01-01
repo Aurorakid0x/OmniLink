@@ -4,6 +4,9 @@ import (
 	"OmniLink/internal/config"
 	"OmniLink/internal/initial"
 	jwtMiddleware "OmniLink/internal/middleware/jwt"
+	chatService "OmniLink/internal/modules/chat/application/service"
+	chatPersistence "OmniLink/internal/modules/chat/infrastructure/persistence"
+	chatHandler "OmniLink/internal/modules/chat/interface/http"
 	contactService "OmniLink/internal/modules/contact/application/service"
 	contactPersistence "OmniLink/internal/modules/contact/infrastructure/persistence"
 	contactHandler "OmniLink/internal/modules/contact/interface/http"
@@ -33,12 +36,18 @@ func init() {
 	contactRepo := contactPersistence.NewUserContactRepository(initial.GormDB)
 	applyRepo := contactPersistence.NewContactApplyRepository(initial.GormDB)
 	uow := contactPersistence.NewContactUnitOfWork(initial.GormDB)
+	sessionRepo := chatPersistence.NewSessionRepository(initial.GormDB)
+	messageRepo := chatPersistence.NewMessageRepository(initial.GormDB)
 	// 2. Service
 	userSvc := service.NewUserInfoService(userRepo)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow)
+	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo)
+	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
 	// 3. Handler
 	userH := userHandler.NewUserInfoHandler(userSvc)
 	contactH := contactHandler.NewContactHandler(contactSvc)
+	sessionH := chatHandler.NewSessionHandler(sessionSvc)
+	messageH := chatHandler.NewMessageHandler(messageSvc)
 
 	//GE.Static("/static/avatars", config.GetConfig().StaticAvatarPath)
 	//GE.Static("/static/files", config.GetConfig().StaticFilePath)
@@ -59,6 +68,10 @@ func init() {
 	authed.POST("/contact/getNewContactList", contactH.GetNewContactList)
 	authed.POST("/contact/passContactApply", contactH.PassContactApply)
 	authed.POST("/contact/refuseContactApply", contactH.RefuseContactApply)
+	authed.POST("/session/checkOpenSessionAllowed", sessionH.CheckOpenSessionAllowed)
+	authed.POST("/session/openSession", sessionH.OpenSession)
+	authed.POST("/session/getUserSessionList", sessionH.GetUserSessionList)
+	authed.POST("/message/getMessageList", messageH.GetMessageList)
 	//GE.POST("/user/updateUserInfo", v1.UpdateUserInfo)
 	// GE.POST("/user/getUserInfoList", v1.GetUserInfoList)
 	// GE.POST("/user/ableUsers", v1.AbleUsers)

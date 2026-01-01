@@ -12,7 +12,7 @@
     </div>
 
     <!-- Message List -->
-    <div class="message-area custom-scrollbar" ref="msgListRef">
+    <div class="message-area custom-scrollbar" ref="msgListRef" @scroll="handleScroll">
         <div v-for="msg in messages" :key="msg.uuid || msg.id" class="message-row" :class="{ 'is-mine': isMine(msg) }">
             <el-avatar :src="normalizeUrl(msg.send_avatar)" :size="36" class="msg-avatar">
                 {{ msg.send_name ? msg.send_name[0] : '?' }}
@@ -106,7 +106,7 @@ const props = defineProps({
   messages: Array
 })
 
-const emit = defineEmits(['send-message', 'toggle-right-sidebar'])
+const emit = defineEmits(['send-message', 'toggle-right-sidebar', 'load-more'])
 
 const store = useStore()
 const inputText = ref('')
@@ -140,6 +140,15 @@ const isImage = (typeOrUrl) => {
     return imgExts.some(ext => typeOrUrl.toLowerCase().includes(ext))
 }
 
+const loadingMore = ref(false)
+const pendingPrepend = ref(null)
+
+const isNearBottom = () => {
+    const el = msgListRef.value
+    if (!el) return true
+    return el.scrollHeight - (el.scrollTop + el.clientHeight) < 80
+}
+
 const scrollToBottom = () => {
     nextTick(() => {
         if (msgListRef.value) {
@@ -148,11 +157,49 @@ const scrollToBottom = () => {
     })
 }
 
-watch(() => props.messages, () => {
-    scrollToBottom()
-}, { deep: true })
+const handleScroll = () => {
+    const el = msgListRef.value
+    if (!el || loadingMore.value) return
+    if (el.scrollTop <= 20) {
+        loadingMore.value = true
+        pendingPrepend.value = {
+            scrollHeight: el.scrollHeight,
+            scrollTop: el.scrollTop,
+        }
+        emit('load-more')
+        setTimeout(() => {
+            if (loadingMore.value && pendingPrepend.value) {
+                loadingMore.value = false
+                pendingPrepend.value = null
+            }
+        }, 1200)
+    }
+}
+
+watch(
+    () => props.messages && props.messages.length,
+    (newLen, oldLen) => {
+        if (!msgListRef.value) return
+        if (pendingPrepend.value) {
+            nextTick(() => {
+                const el = msgListRef.value
+                if (!el || !pendingPrepend.value) return
+                const diff = el.scrollHeight - pendingPrepend.value.scrollHeight
+                el.scrollTop = pendingPrepend.value.scrollTop + diff
+                pendingPrepend.value = null
+                loadingMore.value = false
+            })
+            return
+        }
+        if (newLen > oldLen && isNearBottom()) {
+            scrollToBottom()
+        }
+    }
+)
 
 watch(() => props.session, () => {
+    pendingPrepend.value = null
+    loadingMore.value = false
     scrollToBottom()
 })
 

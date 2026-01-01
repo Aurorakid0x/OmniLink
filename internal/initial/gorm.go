@@ -2,6 +2,7 @@ package initial
 
 import (
 	"OmniLink/internal/config"
+	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	contactEntity "OmniLink/internal/modules/contact/domain/entity"
 	userEntity "OmniLink/internal/modules/user/domain/entity"
 
@@ -45,6 +46,8 @@ func init() {
 		&userEntity.UserInfo{},
 		&contactEntity.UserContact{},
 		&contactEntity.ContactApply{},
+		&chatEntity.Session{},
+		&chatEntity.Message{},
 	)
 	// 自动迁移，如果没有建表，会自动创建对应的表
 	if err != nil {
