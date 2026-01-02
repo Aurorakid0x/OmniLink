@@ -97,6 +97,26 @@ export const getGroupMemberList = (data) => {
     return request.post('/group/getGroupMemberList', data)
 }
 
+export const inviteGroupMembers = (data) => {
+    // data: { owner_id, group_id, member_ids: [] }
+    return request.post('/group/inviteGroupMembers', data)
+}
+
+export const leaveGroup = (data) => {
+    // data: { owner_id, group_id }
+    return request.post('/group/leaveGroup', data)
+}
+
+export const dismissGroup = (data) => {
+    // data: { owner_id, group_id }
+    return request.post('/group/dismissGroup', data)
+}
+
+export const removeGroupMembers = (data) => {
+    // data: { owner_id, group_id, member_ids: [] }
+    return request.post('/group/removeGroupMembers', data)
+}
+
 // 消息相关
 export const getMessageList = (data) => {
   // data: { user_one_id, user_two_id }

@@ -46,6 +46,11 @@
           :session="currentSession"
         />
       </transition>
+      
+      <CreateGroupDialog 
+        v-model:visible="showCreateGroup"
+        @success="handleCreateGroupSuccess"
+      />
     </div>
   </div>
 </template>
@@ -58,7 +63,8 @@ import SessionList from '../components/chat/SessionList.vue'
 import ContactList from '../components/chat/ContactList.vue'
 import ChatWindow from '../components/chat/ChatWindow.vue'
 import GroupInfo from '../components/chat/GroupInfo.vue'
-import { getMessageList, normalizeUrl } from '../api/im'
+import CreateGroupDialog from '../components/chat/CreateGroupDialog.vue'
+import { getMessageList, getGroupMessageList, normalizeUrl } from '../api/im'
 import { normalizeSession } from '../utils/imNormalize'
 
 const HISTORY_PAGE_SIZE = 20
@@ -132,14 +138,27 @@ const handleStartChatFromContact = (data) => {
     }
 }
 
+const handleCreateGroupSuccess = (session) => {
+    handleSelectSession(session)
+}
+
 const loadHistoryMessages = async (peerId, page, prepend) => {
     try {
-        const res = await getMessageList({
-            user_one_id: userInfo.value.uuid,
-            user_two_id: peerId,
-            page,
-            page_size: HISTORY_PAGE_SIZE,
-        })
+        let res;
+        if (peerId.startsWith('G')) {
+             res = await getGroupMessageList({
+                group_id: peerId,
+                page,
+                page_size: HISTORY_PAGE_SIZE,
+            })
+        } else {
+            res = await getMessageList({
+                user_one_id: userInfo.value.uuid,
+                user_two_id: peerId,
+                page,
+                page_size: HISTORY_PAGE_SIZE,
+            })
+        }
 
         const list = (res.data && res.data.data) ? res.data.data : []
         if (prepend) {

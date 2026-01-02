@@ -107,9 +107,13 @@ const loadData = async () => {
         }
         
         // 加载群组
-        const groupRes = await loadMyJoinedGroup(ownerId)
-        if (groupRes.data && groupRes.data.data) {
-            groupList.value = groupRes.data.data
+        try {
+            const groupRes = await loadMyJoinedGroup(ownerId)
+            if (groupRes.data && groupRes.data.data) {
+                groupList.value = groupRes.data.data
+            }
+        } catch (e) {
+            console.error('Failed to load groups', e)
         }
     } catch (e) {
         console.error(e)

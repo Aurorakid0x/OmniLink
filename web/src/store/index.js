@@ -1,5 +1,5 @@
 import { createStore } from 'vuex'
-import { normalizeUrl, getUserSessionList, getNewContactList } from '../api/im'
+import { normalizeUrl, getUserSessionList, getGroupSessionList, getNewContactList } from '../api/im'
 import { normalizeSession, normalizeIncomingMessage } from '../utils/imNormalize'
 import { ElNotification } from 'element-plus'
 
@@ -188,9 +188,27 @@ export default createStore({
         if (!state.userInfo || !state.userInfo.uuid) return
         try {
             const ownerId = state.userInfo.uuid
-            const userSessionsRes = await getUserSessionList(ownerId)
+            // 并行请求私聊和群聊会话
+            const [userSessionsRes, groupSessionsRes] = await Promise.all([
+                getUserSessionList(ownerId),
+                getGroupSessionList(ownerId)
+            ])
 
-            const list = (userSessionsRes && userSessionsRes.data && userSessionsRes.data.data) ? userSessionsRes.data.data : []
+            let list = []
+            if (userSessionsRes && userSessionsRes.data && userSessionsRes.data.data) {
+                list = list.concat(userSessionsRes.data.data)
+            }
+            if (groupSessionsRes && groupSessionsRes.data && groupSessionsRes.data.data) {
+                list = list.concat(groupSessionsRes.data.data)
+            }
+            
+            // 按时间倒序排序
+            list.sort((a, b) => {
+                const t1 = new Date(a.updated_at || a.created_at).getTime()
+                const t2 = new Date(b.updated_at || b.created_at).getTime()
+                return t2 - t1
+            })
+
             commit('setSessionList', list)
         } catch (e) {
             console.error('Failed to load sessions', e)
