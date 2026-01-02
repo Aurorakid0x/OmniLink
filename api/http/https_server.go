@@ -14,6 +14,7 @@ import (
 	"OmniLink/internal/modules/user/infrastructure/persistence"
 	userHandler "OmniLink/internal/modules/user/interface/http"
 	"OmniLink/pkg/ssl"
+	"OmniLink/pkg/ws"
 
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -28,31 +29,32 @@ func init() {
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
 	GE.Use(cors.New(corsConfig))
-	//先把https重定向注释掉，等https证书配置好再打开
 	GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
-	// Dependency Injection Wiring
-	// 1. Repository
+
+	wsHub := ws.NewHub()
+
 	userRepo := persistence.NewUserInfoRepository(initial.GormDB)
 	contactRepo := contactPersistence.NewUserContactRepository(initial.GormDB)
 	applyRepo := contactPersistence.NewContactApplyRepository(initial.GormDB)
 	uow := contactPersistence.NewContactUnitOfWork(initial.GormDB)
 	sessionRepo := chatPersistence.NewSessionRepository(initial.GormDB)
 	messageRepo := chatPersistence.NewMessageRepository(initial.GormDB)
-	// 2. Service
+
 	userSvc := service.NewUserInfoService(userRepo)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
-	// 3. Handler
+	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo)
+
 	userH := userHandler.NewUserInfoHandler(userSvc)
-	contactH := contactHandler.NewContactHandler(contactSvc)
+	contactH := contactHandler.NewContactHandler(contactSvc, wsHub)
 	sessionH := chatHandler.NewSessionHandler(sessionSvc)
 	messageH := chatHandler.NewMessageHandler(messageSvc)
+	wsH := chatHandler.NewWsHandler(wsHub, realtimeSvc, userRepo)
 
-	//GE.Static("/static/avatars", config.GetConfig().StaticAvatarPath)
-	//GE.Static("/static/files", config.GetConfig().StaticFilePath)
 	GE.POST("/login", userH.Login)
 	GE.POST("/register", userH.Register)
+	GE.GET("/wss", wsH.Connect)
 
 	authed := GE.Group("/")
 	authed.Use(jwtMiddleware.Auth())

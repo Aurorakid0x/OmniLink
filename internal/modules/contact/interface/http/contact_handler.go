@@ -4,18 +4,21 @@ import (
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
 	"OmniLink/internal/modules/contact/application/service"
 	"OmniLink/pkg/back"
+	"OmniLink/pkg/ws"
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type ContactHandler struct {
 	svc service.ContactService
+	hub *ws.Hub
 }
 
-func NewContactHandler(svc service.ContactService) *ContactHandler {
-	return &ContactHandler{svc: svc}
+func NewContactHandler(svc service.ContactService, hub *ws.Hub) *ContactHandler {
+	return &ContactHandler{svc: svc, hub: hub}
 }
 
 func (h *ContactHandler) GetUserList(c *gin.Context) {
@@ -63,6 +66,14 @@ func (h *ContactHandler) ApplyContact(c *gin.Context) {
 	}
 
 	data, err := h.svc.ApplyContact(req)
+	if err == nil && h.hub != nil && req.ContactId != "" {
+		_ = h.hub.SendJSON(req.ContactId, map[string]interface{}{
+			"type":        "contact.apply",
+			"apply_id":    data.ApplyId,
+			"from_user_id": req.OwnerId,
+			"created_at":  time.Now().Format(time.RFC3339),
+		})
+	}
 	back.Result(c, data, err)
 }
 

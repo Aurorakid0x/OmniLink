@@ -36,3 +36,7 @@ func (r *messageRepositoryImpl) ListPrivateMessages(userOneID string, userTwoID 
 	}
 	return msgs, nil
 }
+
+func (r *messageRepositoryImpl) Create(message *chatEntity.Message) error {
+	return r.db.Create(message).Error
+}

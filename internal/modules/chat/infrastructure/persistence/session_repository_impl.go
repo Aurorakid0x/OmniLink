@@ -3,6 +3,7 @@ package persistence
 import (
 	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	chatRepository "OmniLink/internal/modules/chat/domain/repository"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -45,4 +46,13 @@ func (r *sessionRepositoryImpl) CreateMany(sessions []*chatEntity.Session) error
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		return tx.Create(&sessions).Error
 	})
+}
+
+func (r *sessionRepositoryImpl) UpdateLastMessageBySendAndReceive(sendID string, receiveID string, lastMessage string, lastMessageAt time.Time) error {
+	return r.db.Model(&chatEntity.Session{}).
+		Where("send_id = ? AND receive_id = ? AND deleted_at IS NULL", sendID, receiveID).
+		Updates(map[string]interface{}{
+			"last_message":    lastMessage,
+			"last_message_at": lastMessageAt,
+		}).Error
 }
