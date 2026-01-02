@@ -124,7 +124,7 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 	}
 
 	now := time.Now()
-	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository) error {
+	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, _ contactRepository.GroupInfoRepository) error {
 		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -197,7 +197,7 @@ func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContact
 		return xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
 	}
 
-	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository) error {
+	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, _ contactRepository.GroupInfoRepository) error {
 		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

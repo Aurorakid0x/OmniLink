@@ -46,6 +46,7 @@ func init() {
 		&userEntity.UserInfo{},
 		&contactEntity.UserContact{},
 		&contactEntity.ContactApply{},
+		&contactEntity.GroupInfo{},
 		&chatEntity.Session{},
 		&chatEntity.Message{},
 	)

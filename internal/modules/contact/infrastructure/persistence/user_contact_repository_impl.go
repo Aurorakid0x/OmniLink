@@ -43,6 +43,15 @@ func (r *userContactRepositoryImpl) GetUserContactByUserIDAndContactIDAndType(us
 	return &contact, nil
 }
 
+func (r *userContactRepositoryImpl) GetGroupMembers(groupID string) ([]entity.UserContact, error) {
+	var contacts []entity.UserContact
+	err := r.db.Where("contact_id = ? AND contact_type = ?", groupID, 1).Find(&contacts).Error
+	if err != nil {
+		return nil, err
+	}
+	return contacts, nil
+}
+
 func (r *userContactRepositoryImpl) CreateUserContact(contact *entity.UserContact) error {
 	return r.db.Create(contact).Error
 }
