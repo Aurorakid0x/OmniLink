@@ -37,6 +37,28 @@ func (r *messageRepositoryImpl) ListPrivateMessages(userOneID string, userTwoID 
 	return msgs, nil
 }
 
+func (r *messageRepositoryImpl) ListGroupMessages(groupID string, page int, pageSize int) ([]chatEntity.Message, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	var msgs []chatEntity.Message
+	err := r.db.
+		Where("receive_id = ?", groupID).
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(pageSize).
+		Find(&msgs).Error
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
 func (r *messageRepositoryImpl) Create(message *chatEntity.Message) error {
 	return r.db.Create(message).Error
 }

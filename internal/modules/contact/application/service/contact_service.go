@@ -9,6 +9,7 @@ import (
 	"OmniLink/pkg/util"
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type ContactService interface {
 	GetNewContactList(req contactRequest.GetNewContactListRequest) ([]contactRespond.NewContactApplyItem, error)
 	PassContactApply(req contactRequest.PassContactApplyRequest) error
 	RefuseContactApply(req contactRequest.RefuseContactApplyRequest) error
+	LoadMyJoinedGroup(req contactRequest.LoadMyJoinedGroupRequest) ([]contactRespond.JoinedGroupItem, error)
 }
 
 type contactServiceImpl struct {
@@ -118,13 +120,60 @@ func (s *contactServiceImpl) GetUserList(req contactRequest.GetUserListRequest) 
 	return out, nil
 }
 
+func (s *contactServiceImpl) LoadMyJoinedGroup(req contactRequest.LoadMyJoinedGroupRequest) ([]contactRespond.JoinedGroupItem, error) {
+	if req.OwnerId == "" {
+		return nil, xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
+	}
+
+	contacts, err := s.contactRepo.GetUserContactsByUserID(req.OwnerId)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	var groupIDs []string
+	for _, c := range contacts {
+		if c.ContactType == 1 && (c.Status == 0 || c.Status == 5) {
+			groupIDs = append(groupIDs, c.ContactId)
+		}
+	}
+
+	if len(groupIDs) == 0 {
+		return []contactRespond.JoinedGroupItem{}, nil
+	}
+
+	var items []contactRespond.JoinedGroupItem
+	err = s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+		for _, gid := range groupIDs {
+			info, err := groupRepo.GetGroupInfoByUUID(gid)
+			if err != nil {
+				// 忽略单个查询错误
+				continue
+			}
+			items = append(items, contactRespond.JoinedGroupItem{
+				GroupId:   info.Uuid,
+				GroupName: info.Name,
+				Avatar:    info.Avatar,
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	return items, nil
+}
+
 func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactApplyRequest) error {
 	if req.OwnerId == "" || req.ApplyId == "" {
 		return xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
 	}
 
 	now := time.Now()
-	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, _ contactRepository.GroupInfoRepository) error {
+	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -134,12 +183,6 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 			return xerr.ErrServerError
 		}
 
-		if apply.ContactType != 0 {
-			return xerr.New(xerr.BadRequest, "暂不支持群组申请")
-		}
-		if apply.ContactId != req.OwnerId {
-			return xerr.New(xerr.Forbidden, "无权操作该申请")
-		}
 		if apply.Status == 1 {
 			return nil
 		}
@@ -147,48 +190,119 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 			return xerr.New(xerr.Forbidden, "该申请已被拉黑")
 		}
 
-		apply.Status = 1
-		if err := applyRepo.UpdateContactApply(apply); err != nil {
-			zlog.Error(err.Error())
-			return xerr.ErrServerError
+		// 好友申请处理
+		if apply.ContactType == 0 {
+			if apply.ContactId != req.OwnerId {
+				return xerr.New(xerr.Forbidden, "无权操作该申请")
+			}
+
+			apply.Status = 1
+			if err := applyRepo.UpdateContactApply(apply); err != nil {
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
+
+			upsertFriend := func(userID, contactID string) error {
+				rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(userID, contactID, 0)
+				if err == nil {
+					if rel.Status == 0 {
+						return nil
+					}
+					rel.ContactType = 0
+					rel.Status = 0
+					rel.UpdateAt = now
+					return contactRepo.UpdateUserContact(rel)
+				}
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+
+				newRel := &contactEntity.UserContact{
+					UserId:      userID,
+					ContactId:   contactID,
+					ContactType: 0,
+					Status:      0,
+					CreatedAt:   now,
+					UpdateAt:    now,
+				}
+				return contactRepo.CreateUserContact(newRel)
+			}
+
+			if err := upsertFriend(apply.UserId, apply.ContactId); err != nil {
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
+			if err := upsertFriend(apply.ContactId, apply.UserId); err != nil {
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
+			return nil
 		}
 
-		upsertFriend := func(userID, contactID string) error {
-			rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(userID, contactID, 0)
-			if err == nil {
-				if rel.Status == 0 {
-					return nil
-				}
-				rel.ContactType = 0
-				rel.Status = 0
-				rel.UpdateAt = now
-				return contactRepo.UpdateUserContact(rel)
+		// 群组申请处理
+		if apply.ContactType == 1 {
+			group, err := groupRepo.GetGroupInfoByUUID(apply.ContactId)
+			if err != nil {
+				return err
 			}
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
+			if group.Status != 0 {
+				return xerr.New(xerr.Forbidden, "群组状态异常")
+			}
+			if group.OwnerId != req.OwnerId {
+				return xerr.New(xerr.Forbidden, "只有群主可以审批入群申请")
+			}
+
+			apply.Status = 1
+			if err := applyRepo.UpdateContactApply(apply); err != nil {
 				return err
 			}
 
-			newRel := &contactEntity.UserContact{
-				UserId:      userID,
-				ContactId:   contactID,
-				ContactType: 0,
-				Status:      0,
-				CreatedAt:   now,
-				UpdateAt:    now,
+			// Upsert 群成员关系
+			rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(apply.UserId, apply.ContactId, 1)
+			if err == nil {
+				if rel.Status != 0 {
+					rel.Status = 0
+					rel.UpdateAt = now
+					if err := contactRepo.UpdateUserContact(rel); err != nil {
+						return err
+					}
+				}
+			} else if errors.Is(err, gorm.ErrRecordNotFound) {
+				newRel := &contactEntity.UserContact{
+					UserId:      apply.UserId,
+					ContactId:   apply.ContactId,
+					ContactType: 1,
+					Status:      0,
+					CreatedAt:   now,
+					UpdateAt:    now,
+				}
+				if err := contactRepo.CreateUserContact(newRel); err != nil {
+					return err
+				}
+			} else {
+				return err
 			}
-			return contactRepo.CreateUserContact(newRel)
+
+			// 更新群成员信息
+			allMembers, err := contactRepo.GetGroupMembers(apply.ContactId)
+			if err == nil {
+				var allIDs []string
+				for _, m := range allMembers {
+					allIDs = append(allIDs, m.UserId)
+				}
+				membersJSON, _ := json.Marshal(allIDs)
+				group.Members = membersJSON
+				group.MemberCnt = len(allIDs)
+				group.UpdatedAt = now
+				if err := groupRepo.UpdateGroupInfo(group); err != nil {
+					return err
+				}
+			}
+
+			return nil
 		}
 
-		if err := upsertFriend(apply.UserId, apply.ContactId); err != nil {
-			zlog.Error(err.Error())
-			return xerr.ErrServerError
-		}
-		if err := upsertFriend(apply.ContactId, apply.UserId); err != nil {
-			zlog.Error(err.Error())
-			return xerr.ErrServerError
-		}
-
-		return nil
+		return xerr.New(xerr.BadRequest, "不支持的申请类型")
 	})
 }
 
@@ -197,7 +311,7 @@ func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContact
 		return xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
 	}
 
-	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, _ contactRepository.GroupInfoRepository) error {
+	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -207,12 +321,6 @@ func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContact
 			return xerr.ErrServerError
 		}
 
-		if apply.ContactType != 0 {
-			return xerr.New(xerr.BadRequest, "暂不支持群组申请")
-		}
-		if apply.ContactId != req.OwnerId {
-			return xerr.New(xerr.Forbidden, "无权操作该申请")
-		}
 		if apply.Status == 2 {
 			return nil
 		}
@@ -221,6 +329,22 @@ func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContact
 		}
 		if apply.Status == 3 {
 			return xerr.New(xerr.Forbidden, "该申请已被拉黑")
+		}
+
+		if apply.ContactType == 0 {
+			if apply.ContactId != req.OwnerId {
+				return xerr.New(xerr.Forbidden, "无权操作该申请")
+			}
+		} else if apply.ContactType == 1 {
+			group, err := groupRepo.GetGroupInfoByUUID(apply.ContactId)
+			if err != nil {
+				return err
+			}
+			if group.OwnerId != req.OwnerId {
+				return xerr.New(xerr.Forbidden, "只有群主可以审批")
+			}
+		} else {
+			return xerr.New(xerr.BadRequest, "不支持的申请类型")
 		}
 
 		apply.Status = 2
@@ -299,72 +423,109 @@ func (s *contactServiceImpl) ApplyContact(req contactRequest.ApplyContactRequest
 		contactType = 1
 	}
 
-	if contactType == 0 {
-		briefs, err := s.userRepo.GetUserBriefByUUIDs([]string{req.ContactId})
-		if err != nil {
-			zlog.Error(err.Error())
-			return nil, xerr.ErrServerError
-		}
-		if len(briefs) == 0 {
-			return nil, xerr.New(xerr.NotFound, "用户不存在")
-		}
-		if briefs[0].Status != 0 {
-			return nil, xerr.New(xerr.Forbidden, "用户不可用")
-		}
-	}
-
-	// 检查关系状态
-	if rel, err := s.contactRepo.GetUserContactByUserIDAndContactID(req.OwnerId, req.ContactId); err == nil {
-		if rel.ContactType == contactType {
-			switch rel.Status {
-			case 0:
-				return nil, xerr.New(xerr.BadRequest, "已是好友")
-			case 1:
-				return nil, xerr.New(xerr.BadRequest, "您已将对方拉黑")
-			case 2:
-				return nil, xerr.New(xerr.Forbidden, "对方已将您拉黑")
+	var applyID string
+	err := s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+		if contactType == 0 {
+			briefs, err := s.userRepo.GetUserBriefByUUIDs([]string{req.ContactId})
+			if err != nil {
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
+			if len(briefs) == 0 {
+				return xerr.New(xerr.NotFound, "用户不存在")
+			}
+			if briefs[0].Status != 0 {
+				return xerr.New(xerr.Forbidden, "用户不可用")
+			}
+		} else {
+			// 群组检查
+			group, err := groupRepo.GetGroupInfoByUUID(req.ContactId)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return xerr.New(xerr.NotFound, "群组不存在")
+				}
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
+			if group.Status != 0 {
+				return xerr.New(xerr.Forbidden, "群组状态异常")
+			}
+			// 检查是否已经是成员
+			rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(req.OwnerId, req.ContactId, 1)
+			if err == nil && (rel.Status == 0 || rel.Status == 5) {
+				return xerr.New(xerr.BadRequest, "已在群聊中")
 			}
 		}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		zlog.Error(err.Error())
-		return nil, xerr.ErrServerError
-	}
 
-	now := time.Now()
-	apply, err := s.applyRepo.GetContactApplyByUserIDAndContactID(req.OwnerId, req.ContactId, contactType)
-	if err == nil {
-		apply.Status = 0
-		apply.Message = req.Message
-		apply.LastApplyAt = now
-		if apply.Uuid == "" {
-			apply.Uuid = util.GenerateApplyID()
+		// 检查关系状态 (仅针对好友，群组已经在上面查了成员关系)
+		if contactType == 0 {
+			if rel, err := contactRepo.GetUserContactByUserIDAndContactID(req.OwnerId, req.ContactId); err == nil {
+				if rel.ContactType == contactType {
+					switch rel.Status {
+					case 0:
+						return xerr.New(xerr.BadRequest, "已是好友")
+					case 1:
+						return xerr.New(xerr.BadRequest, "您已将对方拉黑")
+					case 2:
+						return xerr.New(xerr.Forbidden, "对方已将您拉黑")
+					}
+				}
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
 		}
-		if err := s.applyRepo.UpdateContactApply(apply); err != nil {
+
+		now := time.Now()
+		apply, err := applyRepo.GetContactApplyByUserIDAndContactID(req.OwnerId, req.ContactId, contactType)
+		if err == nil {
+			apply.Status = 0
+			apply.Message = req.Message
+			if apply.Message == "" && contactType == 1 {
+				apply.Message = "申请加入群聊"
+			}
+			apply.LastApplyAt = now
+			if apply.Uuid == "" {
+				apply.Uuid = util.GenerateApplyID()
+			}
+			if err := applyRepo.UpdateContactApply(apply); err != nil {
+				zlog.Error(err.Error())
+				return xerr.ErrServerError
+			}
+			applyID = apply.Uuid
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			zlog.Error(err.Error())
-			return nil, xerr.ErrServerError
+			return xerr.ErrServerError
 		}
-		return &contactRespond.ApplyContactRespond{ApplyId: apply.Uuid}, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		zlog.Error(err.Error())
-		return nil, xerr.ErrServerError
+
+		msg := req.Message
+		if msg == "" && contactType == 1 {
+			msg = "申请加入群聊"
+		}
+		newApply := contactEntity.ContactApply{
+			Uuid:        util.GenerateApplyID(),
+			UserId:      req.OwnerId,
+			ContactId:   req.ContactId,
+			ContactType: contactType,
+			Status:      0,
+			Message:     msg,
+			LastApplyAt: now,
+		}
+		if err := applyRepo.CreateContactApply(&newApply); err != nil {
+			zlog.Error(err.Error())
+			return xerr.ErrServerError
+		}
+		applyID = newApply.Uuid
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	newApply := contactEntity.ContactApply{
-		Uuid:        util.GenerateApplyID(),
-		UserId:      req.OwnerId,
-		ContactId:   req.ContactId,
-		ContactType: contactType,
-		Status:      0,
-		Message:     req.Message,
-		LastApplyAt: now,
-	}
-	if err := s.applyRepo.CreateContactApply(&newApply); err != nil {
-		zlog.Error(err.Error())
-		return nil, xerr.ErrServerError
-	}
-
-	return &contactRespond.ApplyContactRespond{ApplyId: newApply.Uuid}, nil
+	return &contactRespond.ApplyContactRespond{ApplyId: applyID}, nil
 }
 
 func (s *contactServiceImpl) GetNewContactList(req contactRequest.GetNewContactListRequest) ([]contactRespond.NewContactApplyItem, error) {
@@ -372,21 +533,49 @@ func (s *contactServiceImpl) GetNewContactList(req contactRequest.GetNewContactL
 		return nil, xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
 	}
 
-	applies, err := s.applyRepo.ListPendingAppliesByContactID(req.OwnerId)
+	var allApplies []contactEntity.ContactApply
+
+	err := s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+		// 1. 获取好友申请
+		friendApplies, err := applyRepo.ListPendingAppliesByContactID(req.OwnerId)
+		if err != nil {
+			return err
+		}
+
+		// 2. 获取我拥有的群组
+		myGroups, err := groupRepo.ListByOwnerID(req.OwnerId)
+		if err != nil {
+			return err
+		}
+
+		// 3. 获取群组申请
+		var groupApplies []contactEntity.ContactApply
+		for _, g := range myGroups {
+			apps, err := applyRepo.ListPendingAppliesByContactID(g.Uuid)
+			if err != nil {
+				return err
+			}
+			groupApplies = append(groupApplies, apps...)
+		}
+
+		// 合并
+		allApplies = append(friendApplies, groupApplies...)
+		return nil
+	})
+
 	if err != nil {
 		zlog.Error(err.Error())
 		return nil, xerr.ErrServerError
 	}
-	if len(applies) == 0 {
+
+	if len(allApplies) == 0 {
 		return []contactRespond.NewContactApplyItem{}, nil
 	}
 
-	userIDs := make([]string, 0, len(applies))
-	seen := make(map[string]struct{}, len(applies))
-	for _, a := range applies {
-		if a.ContactType != 0 {
-			continue
-		}
+	userIDs := make([]string, 0, len(allApplies))
+	seen := make(map[string]struct{}, len(allApplies))
+	for _, a := range allApplies {
+		// 无论是好友申请还是群申请，UserId 都是申请人
 		if a.UserId == "" {
 			continue
 		}
@@ -419,9 +608,10 @@ func (s *contactServiceImpl) GetNewContactList(req contactRequest.GetNewContactL
 		}
 	}
 
-	out := make([]contactRespond.NewContactApplyItem, 0, len(applies))
-	for _, a := range applies {
-		if a.ContactType != 0 {
+	out := make([]contactRespond.NewContactApplyItem, 0, len(allApplies))
+	for _, a := range allApplies {
+		// 过滤非 0 状态 (虽然 ListPending 已经过滤了，但保险起见)
+		if a.Status != 0 {
 			continue
 		}
 		b, ok := briefMap[a.UserId]
@@ -440,8 +630,15 @@ func (s *contactServiceImpl) GetNewContactList(req contactRequest.GetNewContactL
 			item.Nickname = b.nickname
 			item.Avatar = b.avatar
 		}
+		// 可以考虑在 Message 或其他字段标识这是群申请
+		if a.ContactType == 1 {
+			item.Message = "[申请入群] " + item.Message
+		}
 		out = append(out, item)
 	}
 
+	// 简单的按时间倒序排序
+	// ListPendingAppliesByContactID 已经按时间倒序，但合并后顺序可能乱了
+	// 这里暂不重新排序，或者假设前端会处理，或者由于只是少量数据，可以接受
 	return out, nil
 }

@@ -25,6 +25,8 @@ type GroupService interface {
 	GetGroupInfo(req contactRequest.GetGroupInfoRequest) (*contactRespond.CreateGroupRespond, error)
 	GetGroupMemberList(req contactRequest.GetGroupMemberListRequest) ([]*contactRespond.GroupMemberRespond, error)
 	InviteGroupMembers(req contactRequest.InviteGroupMembersRequest) error
+	LeaveGroup(req contactRequest.LeaveGroupRequest) error
+	DismissGroup(req contactRequest.DismissGroupRequest) error
 }
 
 type groupServiceImpl struct {
@@ -163,7 +165,7 @@ func (s *groupServiceImpl) CreateGroup(req contactRequest.CreateGroupRequest) (*
 			}
 			return nil
 		}
-		//todo：有时间改成用户可以设置自己的入群模式——1.被邀请入群无需同意，2.被邀请入群需要自己同意，
+		//TODO：有时间改成用户可以设置自己的入群模式——1.被邀请入群无需同意，2.被邀请入群需要自己同意，
 		// 业务逻辑改成去查用户的设置然后分别处理，需要同意的走applycontact表
 		for _, uid := range memberIDs {
 			if err := upsertMemberRel(uid); err != nil {
@@ -296,13 +298,17 @@ func (s *groupServiceImpl) InviteGroupMembers(req contactRequest.InviteGroupMemb
 			return err
 		}
 
+		if group.Status != 0 {
+			return xerr.New(xerr.Forbidden, "群组已解散或状态异常，无法邀请成员")
+		}
+
 		now := time.Now()
 		addedCount := 0
 
 		upsertMemberRel := func(userID string) error {
 			rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(userID, req.GroupId, 1)
 			if err == nil {
-				if rel.Status == 0 {
+				if rel.Status == 0 || rel.Status == 5 {
 					return nil
 				}
 				rel.ContactType = 1
@@ -364,5 +370,90 @@ func (s *groupServiceImpl) InviteGroupMembers(req contactRequest.InviteGroupMemb
 		}
 
 		return nil
+	})
+}
+
+func (s *groupServiceImpl) LeaveGroup(req contactRequest.LeaveGroupRequest) error {
+	return s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+		group, err := groupRepo.GetGroupInfoByUUID(req.GroupId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return xerr.New(xerr.NotFound, "群组不存在")
+			}
+			return err
+		}
+
+		if group.Status != 0 {
+			return xerr.New(xerr.Forbidden, "群组已解散或状态异常，无法退群")
+		}
+
+		if group.OwnerId == req.OwnerId {
+			return xerr.New(xerr.Forbidden, "群主不能退群，请先转让群主或解散群")
+		}
+
+		rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(req.OwnerId, req.GroupId, 1)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return xerr.New(xerr.BadRequest, "非群成员")
+			}
+			return err
+		}
+		if rel.Status != 0 && rel.Status != 5 {
+			return xerr.New(xerr.BadRequest, "非群成员")
+		}
+
+		// Update status to 6 (Quit)
+		rel.Status = 6
+		rel.UpdateAt = time.Now()
+		if err := contactRepo.UpdateUserContact(rel); err != nil {
+			return err
+		}
+
+		// Update group info members
+		var members []string
+		if err := json.Unmarshal(group.Members, &members); err != nil {
+			return err
+		}
+
+		newMembers := make([]string, 0, len(members))
+		for _, m := range members {
+			if m != req.OwnerId {
+				newMembers = append(newMembers, m)
+			}
+		}
+
+		membersJSON, _ := json.Marshal(newMembers)
+		group.Members = membersJSON
+		group.MemberCnt = len(newMembers)
+		group.UpdatedAt = time.Now()
+
+		return groupRepo.UpdateGroupInfo(group)
+	})
+}
+
+func (s *groupServiceImpl) DismissGroup(req contactRequest.DismissGroupRequest) error {
+	return s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+		group, err := groupRepo.GetGroupInfoByUUID(req.GroupId)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return xerr.New(xerr.NotFound, "群组不存在")
+			}
+			return err
+		}
+
+		if group.OwnerId != req.OwnerId {
+			return xerr.New(xerr.Forbidden, "非群主无法解散群聊")
+		}
+
+		if group.Status == 2 {
+			return xerr.New(xerr.Forbidden, "群组已解散，请勿重复操作")
+		}
+		if group.Status != 0 {
+			return xerr.New(xerr.Forbidden, "群组状态异常，无法解散")
+		}
+
+		group.Status = 2
+		group.UpdatedAt = time.Now()
+		return groupRepo.UpdateGroupInfo(group)
 	})
 }

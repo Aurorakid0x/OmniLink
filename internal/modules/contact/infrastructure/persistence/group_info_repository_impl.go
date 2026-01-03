@@ -31,3 +31,12 @@ func (r *groupInfoRepositoryImpl) GetGroupInfoByUUID(uuid string) (*entity.Group
 	}
 	return &g, nil
 }
+
+func (r *groupInfoRepositoryImpl) ListByOwnerID(ownerID string) ([]entity.GroupInfo, error) {
+	var groups []entity.GroupInfo
+	err := r.db.Where("owner_id = ? AND status = 0", ownerID).Find(&groups).Error
+	if err != nil {
+		return nil, err
+	}
+	return groups, nil
+}

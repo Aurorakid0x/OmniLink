@@ -57,6 +57,26 @@ func (h *SessionHandler) GetUserSessionList(c *gin.Context) {
 	back.Result(c, data, err)
 }
 
+func (h *SessionHandler) GetGroupSessionList(c *gin.Context) {
+	var req chatRequest.GetGroupSessionListRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		if req.OwnerId != "" && req.OwnerId != uuid {
+			back.Error(c, xerr.Forbidden, "owner_id 不匹配")
+			return
+		}
+		req.OwnerId = uuid
+	}
+
+	data, err := h.svc.GetGroupSessionList(req.OwnerId)
+	back.Result(c, data, err)
+}
+
 func (h *SessionHandler) OpenSession(c *gin.Context) {
 	var req chatRequest.OpenSessionRequest
 	if err := c.BindJSON(&req); err != nil {

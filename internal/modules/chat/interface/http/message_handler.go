@@ -37,3 +37,21 @@ func (h *MessageHandler) GetMessageList(c *gin.Context) {
 	data, err := h.svc.GetMessageList(req)
 	back.Result(c, data, err)
 }
+
+func (h *MessageHandler) GetGroupMessageList(c *gin.Context) {
+	var req chatRequest.GetGroupMessageListRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	uuid := c.GetString("uuid")
+	if uuid == "" {
+		back.Error(c, xerr.Unauthorized, "未登录")
+		return
+	}
+
+	data, err := h.svc.GetGroupMessageList(req, uuid)
+	back.Result(c, data, err)
+}

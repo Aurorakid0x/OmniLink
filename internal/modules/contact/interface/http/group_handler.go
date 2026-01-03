@@ -79,3 +79,35 @@ func (h *GroupHandler) InviteGroupMembers(c *gin.Context) {
 	err := h.svc.InviteGroupMembers(req)
 	back.Result(c, nil, err)
 }
+
+func (h *GroupHandler) LeaveGroup(c *gin.Context) {
+	var req contactRequest.LeaveGroupRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	err := h.svc.LeaveGroup(req)
+	back.Result(c, nil, err)
+}
+
+func (h *GroupHandler) DismissGroup(c *gin.Context) {
+	var req contactRequest.DismissGroupRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	err := h.svc.DismissGroup(req)
+	back.Result(c, nil, err)
+}

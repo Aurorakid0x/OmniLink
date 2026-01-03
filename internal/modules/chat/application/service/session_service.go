@@ -21,19 +21,22 @@ type SessionService interface {
 	CheckOpenSessionAllowed(req chatRequest.OpenSessionRequest) (bool, error)
 	OpenSession(req chatRequest.OpenSessionRequest) (*chatRespond.SessionItem, error)
 	GetUserSessionList(ownerID string) ([]chatRespond.SessionItem, error)
+	GetGroupSessionList(ownerID string) ([]chatRespond.SessionItem, error)
 }
 
 type sessionServiceImpl struct {
 	sessionRepo chatRepository.SessionRepository
 	contactRepo contactRepository.UserContactRepository
 	userRepo    userRepository.UserInfoRepository
+	groupRepo   contactRepository.GroupInfoRepository
 }
 
-func NewSessionService(sessionRepo chatRepository.SessionRepository, contactRepo contactRepository.UserContactRepository, userRepo userRepository.UserInfoRepository) SessionService {
+func NewSessionService(sessionRepo chatRepository.SessionRepository, contactRepo contactRepository.UserContactRepository, userRepo userRepository.UserInfoRepository, groupRepo contactRepository.GroupInfoRepository) SessionService {
 	return &sessionServiceImpl{
 		sessionRepo: sessionRepo,
 		contactRepo: contactRepo,
 		userRepo:    userRepo,
+		groupRepo:   groupRepo,
 	}
 }
 
@@ -67,6 +70,66 @@ func (s *sessionServiceImpl) GetUserSessionList(ownerID string) ([]chatRespond.S
 		})
 	}
 
+	return out, nil
+}
+
+func (s *sessionServiceImpl) GetGroupSessionList(ownerID string) ([]chatRespond.SessionItem, error) {
+	if ownerID == "" {
+		return nil, xerr.New(xerr.BadRequest, xerr.ErrParam.Message)
+	}
+
+	sessions, err := s.sessionRepo.ListGroupSessionsBySendID(ownerID)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	contacts, err := s.contactRepo.GetUserContactsByUserID(ownerID)
+	if err != nil {
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	activeGroups := make(map[string]struct{}, len(contacts))
+	for i := range contacts {
+		c := contacts[i]
+		if c.ContactType != 1 {
+			continue
+		}
+		if c.Status != 0 && c.Status != 5 {
+			continue
+		}
+		if c.ContactId == "" {
+			continue
+		}
+		activeGroups[c.ContactId] = struct{}{}
+	}
+
+	out := make([]chatRespond.SessionItem, 0, len(sessions))
+	for i := range sessions {
+		sess := sessions[i]
+		if !strings.HasPrefix(sess.ReceiveId, "G") {
+			continue
+		}
+		if _, ok := activeGroups[sess.ReceiveId]; !ok {
+			continue
+		}
+
+		updatedAt := sess.CreatedAt
+		if sess.LastMessageAt.Valid {
+			updatedAt = sess.LastMessageAt.Time
+		}
+		out = append(out, chatRespond.SessionItem{
+			SessionId:   sess.Uuid,
+			PeerId:      sess.ReceiveId,
+			PeerType:    "G",
+			PeerName:    sess.ReceiveName,
+			PeerAvatar:  sess.Avatar,
+			LastMsg:     sess.LastMessage,
+			UnreadCount: 0,
+			UpdatedAt:   updatedAt.Format(time.RFC3339),
+		})
+	}
 	return out, nil
 }
 
@@ -114,7 +177,48 @@ func (s *sessionServiceImpl) OpenSession(req chatRequest.OpenSessionRequest) (*c
 
 	peerType := peerTypeOf(req.ReceiveId)
 	if peerType == "G" {
-		return nil, xerr.New(xerr.BadRequest, "暂不支持群聊会话")
+		// Group session logic
+		allowed, err := s.checkAllowed(req.SendId, req.ReceiveId)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, xerr.New(xerr.Forbidden, "无权发起会话")
+		}
+
+		// Check if session already exists
+		sess, err := s.sessionRepo.GetBySendAndReceive(req.SendId, req.ReceiveId)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			zlog.Error(err.Error())
+			return nil, xerr.ErrServerError
+		}
+		if sess != nil {
+			return s.toSessionItem(req.SendId, req.ReceiveId, sess), nil
+		}
+
+		// Get Group Info for session creation
+		group, err := s.groupRepo.GetGroupInfoByUUID(req.ReceiveId)
+		if err != nil {
+			return nil, err
+		}
+
+		now := time.Now()
+		newSess := &chatEntity.Session{
+			Uuid:        util.GenerateSessionID(),
+			SendId:      req.SendId,
+			ReceiveId:   req.ReceiveId,
+			ReceiveName: group.Name,
+			Avatar:      group.Avatar,
+			LastMessage: "",
+			CreatedAt:   now,
+		}
+
+		if err := s.sessionRepo.Create(newSess); err != nil {
+			zlog.Error(err.Error())
+			return nil, xerr.ErrServerError
+		}
+
+		return s.toSessionItem(req.SendId, req.ReceiveId, newSess), nil
 	}
 
 	briefs, err := s.userRepo.GetUserBriefByUUIDs([]string{req.SendId, req.ReceiveId})
@@ -223,13 +327,41 @@ func (s *sessionServiceImpl) checkAllowed(sendID string, receiveID string) (bool
 	peerType := peerTypeOf(receiveID)
 	contactType := int8(0)
 	if peerType == "G" {
-		return false, xerr.New(xerr.BadRequest, "暂不支持群聊会话")
+		// Group Check
+		// 1. Check group existence and status
+		group, err := s.groupRepo.GetGroupInfoByUUID(receiveID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, xerr.New(xerr.NotFound, "群组不存在")
+			}
+			return false, err
+		}
+		if group.Status != 0 {
+			return false, xerr.New(xerr.Forbidden, "群组状态异常")
+		}
+
+		// 2. Check if user is a member
+		rel, err := s.contactRepo.GetUserContactByUserIDAndContactIDAndType(sendID, receiveID, 1)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, xerr.New(xerr.Forbidden, "非群成员")
+			}
+			zlog.Error(err.Error())
+			return false, xerr.ErrServerError
+		}
+		if rel.Status == 6 || rel.Status == 7 {
+			return false, xerr.New(xerr.Forbidden, "非群成员")
+		}
+		if rel.Status != 0 && rel.Status != 5 {
+			return false, xerr.New(xerr.Forbidden, "非正常群成员状态")
+		}
+		return true, nil
 	}
 
 	rel, err := s.contactRepo.GetUserContactByUserIDAndContactIDAndType(sendID, receiveID, contactType)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
+			return false, xerr.New(xerr.Forbidden, "非好友关系，无法发起会话")
 		}
 		zlog.Error(err.Error())
 		return false, xerr.ErrServerError
@@ -242,7 +374,7 @@ func (s *sessionServiceImpl) checkAllowed(sendID string, receiveID string) (bool
 		return false, xerr.New(xerr.Forbidden, "已拉黑对方，先解除拉黑状态才能发起会话")
 	}
 	if rel.Status != 0 {
-		return false, nil
+		return false, xerr.New(xerr.Forbidden, "非正常好友关系，无法发起会话")
 	}
 
 	briefs, err := s.userRepo.GetUserBriefByUUIDs([]string{receiveID})

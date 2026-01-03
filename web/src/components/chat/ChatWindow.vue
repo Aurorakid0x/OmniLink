@@ -59,7 +59,7 @@
     </div>
 
     <!-- Input Area -->
-    <div class="input-area">
+    <div class="input-area" v-if="sessionAllowed">
       <div class="toolbar">
         <el-upload
             class="upload-demo"
@@ -88,6 +88,9 @@
         <el-button type="primary" round @click="handleSend" :disabled="!inputText.trim()">发送</el-button>
       </div>
     </div>
+    <div class="input-area blocked" v-else>
+        <div class="block-msg">{{ blockReason }}</div>
+    </div>
   </div>
   <div class="empty-window glass-panel" v-else>
       <el-empty description="选择一个会话开始聊天" />
@@ -98,7 +101,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from 'vuex'
 import { More, Document, Download, Folder, Picture } from '@element-plus/icons-vue'
-import { normalizeUrl, uploadFile } from '../../api/im'
+import { normalizeUrl, uploadFile, getGroupInfo, checkOpenSessionAllowed } from '../../api/im'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -126,9 +129,82 @@ const sessionName = computed(() => {
     return props.session ? (props.session.peer_name || props.session.username || props.session.group_name) : ''
 })
 
-const groupMemberCount = computed(() => {
-    return 0 
+const groupMemberCount = ref(0)
+const sessionAllowed = ref(true)
+const blockReason = ref('')
+
+const groupId = computed(() => {
+    if (!props.session) return ''
+    return props.session.peer_id || props.session.group_id || props.session.receive_id || ''
 })
+
+let groupCountReqSeq = 0
+watch(groupId, async (id) => {
+    if (!id || !id.startsWith('G')) {
+        groupMemberCount.value = 0
+        return
+    }
+
+    const ownerId = store.state.userInfo && store.state.userInfo.uuid
+    if (!ownerId) {
+        groupMemberCount.value = 0
+        return
+    }
+
+    const seq = ++groupCountReqSeq
+    try {
+        const res = await getGroupInfo({ owner_id: ownerId, group_id: id })
+        if (seq !== groupCountReqSeq) return
+        if (res && res.data && res.data.code === 200 && res.data.data) {
+            groupMemberCount.value = res.data.data.member_cnt || 0
+            return
+        }
+        groupMemberCount.value = 0
+    } catch (e) {
+        if (seq !== groupCountReqSeq) return
+        groupMemberCount.value = 0
+    }
+}, { immediate: true })
+
+watch(() => props.session, async (sess) => {
+    if (!sess) {
+        sessionAllowed.value = true
+        blockReason.value = ''
+        return
+    }
+    const ownerId = store.state.userInfo?.uuid
+    if (!ownerId) return
+
+    // Get peer ID
+    const peerId = sess.peer_id || sess.receive_id || sess.group_id
+    if (!peerId) return
+
+    // Don't check if it's the user themselves
+    if (peerId === ownerId) return
+
+    try {
+        const res = await checkOpenSessionAllowed({
+            send_id: ownerId,
+            receive_id: peerId
+        })
+        if (res.data.code === 200) {
+             if (res.data.data === false) {
+                  sessionAllowed.value = false
+                  blockReason.value = "无法发起会话"
+             } else {
+                 sessionAllowed.value = true
+                 blockReason.value = ''
+             }
+        } else {
+            sessionAllowed.value = false
+            blockReason.value = res.data.message || "无法发起会话"
+        }
+    } catch (e) {
+        console.error(e)
+        sessionAllowed.value = false
+        blockReason.value = "无法发起会话"
+    }
+}, { immediate: true })
 
 const isMine = (msg) => {
     return msg.send_id === store.state.userInfo.uuid
@@ -422,5 +498,17 @@ const triggerImageUpload = () => {
 .tip {
   font-size: 12px;
   color: #909399;
+}
+
+.input-area.blocked {
+    justify-content: center;
+    align-items: center;
+    background: rgba(245, 247, 250, 0.6);
+    display: flex;
+}
+
+.block-msg {
+    color: #909399;
+    font-size: 14px;
 }
 </style>

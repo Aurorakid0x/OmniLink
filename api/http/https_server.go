@@ -1,7 +1,7 @@
 package http
 
 import (
-	"OmniLink/internal/config"
+	//"OmniLink/internal/config"
 	"OmniLink/internal/initial"
 	jwtMiddleware "OmniLink/internal/middleware/jwt"
 	chatService "OmniLink/internal/modules/chat/application/service"
@@ -13,7 +13,8 @@ import (
 	"OmniLink/internal/modules/user/application/service"
 	"OmniLink/internal/modules/user/infrastructure/persistence"
 	userHandler "OmniLink/internal/modules/user/interface/http"
-	"OmniLink/pkg/ssl"
+
+	//"OmniLink/pkg/ssl"
 	"OmniLink/pkg/ws"
 
 	cors "github.com/gin-contrib/cors"
@@ -29,7 +30,7 @@ func init() {
 	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
 	GE.Use(cors.New(corsConfig))
-	GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
+	// GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
 
 	wsHub := ws.NewHub()
 
@@ -44,7 +45,7 @@ func init() {
 	userSvc := service.NewUserInfoService(userRepo)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow)
 	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow)
-	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo)
+	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
 	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo)
 
@@ -68,6 +69,7 @@ func init() {
 		})
 	})
 	authed.POST("/contact/getUserList", contactH.GetUserList)
+	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)
 	authed.POST("/contact/getContactInfo", contactH.GetContactInfo)
 	authed.POST("/contact/applyContact", contactH.ApplyContact)
 	authed.POST("/contact/getNewContactList", contactH.GetNewContactList)
@@ -76,11 +78,15 @@ func init() {
 	authed.POST("/session/checkOpenSessionAllowed", sessionH.CheckOpenSessionAllowed)
 	authed.POST("/session/openSession", sessionH.OpenSession)
 	authed.POST("/session/getUserSessionList", sessionH.GetUserSessionList)
+	authed.POST("/session/getGroupSessionList", sessionH.GetGroupSessionList)
 	authed.POST("/message/getMessageList", messageH.GetMessageList)
+	authed.POST("/message/getGroupMessageList", messageH.GetGroupMessageList)
 	authed.POST("/group/createGroup", groupH.CreateGroup)
 	authed.POST("/group/getGroupInfo", groupH.GetGroupInfo)
 	authed.POST("/group/getGroupMemberList", groupH.GetGroupMemberList)
 	authed.POST("/group/inviteGroupMembers", groupH.InviteGroupMembers)
+	authed.POST("/group/leaveGroup", groupH.LeaveGroup)
+	authed.POST("/group/dismissGroup", groupH.DismissGroup)
 	//GE.POST("/user/updateUserInfo", v1.UpdateUserInfo)
 	// GE.POST("/user/getUserInfoList", v1.GetUserInfoList)
 	// GE.POST("/user/ableUsers", v1.AbleUsers)

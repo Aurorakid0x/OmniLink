@@ -4,5 +4,6 @@ import "OmniLink/internal/modules/chat/domain/entity"
 
 type MessageRepository interface {
 	ListPrivateMessages(userOneID string, userTwoID string, page int, pageSize int) ([]entity.Message, error)
+	ListGroupMessages(groupID string, page int, pageSize int) ([]entity.Message, error)
 	Create(message *entity.Message) error
 }

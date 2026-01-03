@@ -45,7 +45,7 @@ func (r *userContactRepositoryImpl) GetUserContactByUserIDAndContactIDAndType(us
 
 func (r *userContactRepositoryImpl) GetGroupMembers(groupID string) ([]entity.UserContact, error) {
 	var contacts []entity.UserContact
-	err := r.db.Where("contact_id = ? AND contact_type = ?", groupID, 1).Find(&contacts).Error
+	err := r.db.Where("contact_id = ? AND contact_type = ? AND deleted_at IS NULL AND status NOT IN ?", groupID, 1, []int8{6, 7}).Find(&contacts).Error
 	if err != nil {
 		return nil, err
 	}

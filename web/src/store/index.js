@@ -266,6 +266,17 @@ export default createStore({
                          }
 
                          commit('addMessage', msg)
+                         
+                         // A7: 如果是新会话（列表里没有），自动刷新会话列表
+                         const myId = state.userInfo?.uuid
+                         if (myId) {
+                             const normalized = normalizeIncomingMessage(msg, myId)
+                             const peerId = normalized.peer_id
+                             if (peerId && !state.sessionList.find(s => s.peer_id === peerId)) {
+                                 console.log('New session detected, reloading session list...')
+                                 dispatch('loadSessions')
+                             }
+                         }
                     }
                 } catch (e) {
                     console.error('WS Message Parse Error:', e)

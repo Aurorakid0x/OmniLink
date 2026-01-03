@@ -37,6 +37,22 @@ func (h *ContactHandler) GetUserList(c *gin.Context) {
 	back.Result(c, data, err)
 }
 
+func (h *ContactHandler) LoadMyJoinedGroup(c *gin.Context) {
+	var req contactRequest.LoadMyJoinedGroupRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	if uuid := c.GetString("uuid"); uuid != "" {
+		req.OwnerId = uuid
+	}
+
+	data, err := h.svc.LoadMyJoinedGroup(req)
+	back.Result(c, data, err)
+}
+
 func (h *ContactHandler) GetContactInfo(c *gin.Context) {
 	var req contactRequest.GetContactInfoRequest
 	if err := c.BindJSON(&req); err != nil {

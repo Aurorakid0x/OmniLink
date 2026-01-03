@@ -35,6 +35,18 @@ func (r *sessionRepositoryImpl) ListUserSessionsBySendID(sendID string) ([]chatE
 	return sessions, nil
 }
 
+func (r *sessionRepositoryImpl) ListGroupSessionsBySendID(sendID string) ([]chatEntity.Session, error) {
+	var sessions []chatEntity.Session
+	err := r.db.
+		Where("send_id = ? AND deleted_at IS NULL AND receive_id LIKE ?", sendID, "G%").
+		Order("IFNULL(last_message_at, created_at) DESC").
+		Find(&sessions).Error
+	if err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
 func (r *sessionRepositoryImpl) Create(session *chatEntity.Session) error {
 	return r.db.Create(session).Error
 }
