@@ -234,7 +234,7 @@ export default createStore({
         if (!state.userInfo || !state.userInfo.uuid) return
 
         // A3: WS URL 拼接修复
-        const wsUrl = `${state.wsUrl}/wss?client_id=${state.userInfo.uuid}`
+        const wsUrl = `${state.wsUrl}/wss?client_id=${state.userInfo.uuid}&token=${state.token}`
         console.log('Connecting to WS:', wsUrl)
         
         try {

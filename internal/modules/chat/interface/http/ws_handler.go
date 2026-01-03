@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	chatRequest "OmniLink/internal/modules/chat/application/dto/request"
@@ -90,6 +91,21 @@ func (h *WsHandler) Connect(c *gin.Context) {
 			// 一旦前端发了数据，conn.ReadJSON 就会读出来，解析到 req 变量里。
 			// 如果出错（比如前端断网了），就 return 退出循环，连接结束。
 			return
+		}
+
+		if strings.HasPrefix(req.ReceiveId, "G") {
+			memberIDs, item, err := h.svc.SendGroupMessage(clientID, req)
+			if err != nil {
+				_ = h.hub.SendJSON(clientID, map[string]interface{}{
+					"type":    "error",
+					"message": err.Error(),
+				})
+				continue
+			}
+			for _, mid := range memberIDs {
+				_ = h.hub.SendJSON(mid, item)
+			}
+			continue
 		}
 
 		senderItem, receiverItem, err := h.svc.SendPrivateMessage(clientID, req)

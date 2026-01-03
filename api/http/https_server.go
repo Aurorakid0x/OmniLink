@@ -47,7 +47,7 @@ func init() {
 	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
-	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo)
+	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo)
 
 	userH := userHandler.NewUserInfoHandler(userSvc)
 	contactH := contactHandler.NewContactHandler(contactSvc, wsHub)
