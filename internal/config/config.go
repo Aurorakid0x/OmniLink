@@ -31,15 +31,22 @@ type JwtConfig struct {
 	Issuer      string `toml:"issuer"`
 }
 
+type MilvusConfig struct {
+	Address        string `toml:"address"`
+	Username       string `toml:"username"`
+	Password       string `toml:"password"`
+	DBName         string `toml:"dbName"`
+	CollectionName string `toml:"collectionName"`
+	VectorDim      int    `toml:"vectorDim"`
+	MetricType     string `toml:"metricType"`
+}
+
 type Config struct {
-	MainConfig  `toml:"mainConfig"`
-	MysqlConfig `toml:"mysqlConfig"`
-	JwtConfig   `toml:"jwtConfig"`
-	//RedisConfig     `toml:"redisConfig"`
-	//AuthCodeConfig  `toml:"authCodeConfig"`
-	LogConfig `toml:"logConfig"`
-	//KafkaConfig     `toml:"kafkaConfig"`
-	//StaticSrcConfig `toml:"staticSrcConfig"`
+	MainConfig   `toml:"mainConfig"`
+	MysqlConfig  `toml:"mysqlConfig"`
+	JwtConfig    `toml:"jwtConfig"`
+	MilvusConfig `toml:"milvusConfig"`
+	LogConfig    `toml:"logConfig"`
 }
 
 var config *Config

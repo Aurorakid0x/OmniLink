@@ -17,3 +17,12 @@ logPath = "./logs/app.log"
 key = "123="
 expireHours = 24
 issuer = "OmniLink"
+
+[milvusConfig]
+address = "localhost:19530"
+username = ""
+password = ""
+dbName = "omnilink"
+collectionName = "ai_kb_vectors"
+vectorDim = 768
+metricType = "COSINE"

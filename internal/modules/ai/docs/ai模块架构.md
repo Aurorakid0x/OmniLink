@@ -1,0 +1,24 @@
+- internal/modules/ai/application/
+  - service/ ：编排用例（全局助手问答、触发入库、重建索引、上传文档入库、命令执行等）
+  - dto/request|respond/ ：HTTP 入参出参（与现有模块一致）
+- internal/modules/ai/domain/
+  - assistant/ ：全局 AI 个人助手的领域模型（会话、消息、上下文策略、权限裁剪）
+  - rag/ ：RAG 领域（KnowledgeBase、Source、Chunk、Embedding、IngestEvent、检索查询/结果）
+  - agent/ ：自定义 Agent 领域（Agent 配置、persona、绑定知识库、工具授权）
+  - command/ ：智能指令领域（/todo 等解析后的意图、任务）
+  - repository/ ：以上领域的仓储接口（MySQL）、以及向量检索接口（VectorStore）
+- internal/modules/ai/infrastructure/
+  - persistence/ ：GORM 实现（ai_* 表）
+  - vectordb/ ：Milvus（或 pgvector / ES 向量）实现，走统一接口，保证可替换
+  - embedding/ ：embedding provider 实现（OpenAI/DeepSeek/火山/本地），走统一接口
+  - queue/ ：异步入库队列（可以先用 DB outbox + 轮询 worker，后面换 MQ 不动上层）
+  - pipeline/ ：入库流水线（“装载→切分→向量化→写入向量库→落库状态”），可借鉴 SuperBizAgent 的 graph 编排思路
+- internal/modules/ai/interface/http/
+  - assistant_handler.go ：全局助手对话接口（支持流式）
+  - admin_handler.go ：重建索引/回填/状态查询（内部用）
+- internal/modules/ai/jobs/
+  - ingest_worker.go ：消费入库事件（消息/联系人/群变更）并执行 pipeline
+  - rebuild_worker.go ：全量回填/重建（可控限速）
+这样拆的好处：
+
+- RAG 的“入库/检索”是底座，后面自定义 Agent 的“私有知识库”直接复用同一套 rag 域模型与 pipeline；微工具/智能指令复用 assistant 的“对话/工具调用”骨架；不会互相删改。
