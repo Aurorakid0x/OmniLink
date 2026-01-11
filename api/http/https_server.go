@@ -1,9 +1,18 @@
 package http
 
 import (
-	//"OmniLink/internal/config"
+	"OmniLink/internal/config"
 	"OmniLink/internal/initial"
 	jwtMiddleware "OmniLink/internal/middleware/jwt"
+	aiService "OmniLink/internal/modules/ai/application/service"
+	aiChunking "OmniLink/internal/modules/ai/infrastructure/chunking"
+	aiEmbedding "OmniLink/internal/modules/ai/infrastructure/embedding"
+	aiPersistence "OmniLink/internal/modules/ai/infrastructure/persistence"
+	aiPipeline "OmniLink/internal/modules/ai/infrastructure/pipeline"
+	aiReader "OmniLink/internal/modules/ai/infrastructure/reader"
+	aiTransform "OmniLink/internal/modules/ai/infrastructure/transform"
+	aiVectordb "OmniLink/internal/modules/ai/infrastructure/vectordb"
+	aiHTTP "OmniLink/internal/modules/ai/interface/http"
 	chatService "OmniLink/internal/modules/chat/application/service"
 	chatPersistence "OmniLink/internal/modules/chat/infrastructure/persistence"
 	chatHandler "OmniLink/internal/modules/chat/interface/http"
@@ -13,12 +22,13 @@ import (
 	"OmniLink/internal/modules/user/application/service"
 	"OmniLink/internal/modules/user/infrastructure/persistence"
 	userHandler "OmniLink/internal/modules/user/interface/http"
-
-	//"OmniLink/pkg/ssl"
 	"OmniLink/pkg/ws"
+	"OmniLink/pkg/zlog"
+	"strings"
 
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 )
 
 var GE *gin.Engine
@@ -41,6 +51,44 @@ func init() {
 	uow := contactPersistence.NewContactUnitOfWork(initial.GormDB)
 	sessionRepo := chatPersistence.NewSessionRepository(initial.GormDB)
 	messageRepo := chatPersistence.NewMessageRepository(initial.GormDB)
+
+	conf := config.GetConfig()
+	var aiAdminH *aiHTTP.AdminHandler
+	if initial.MilvusClient != nil {
+		metric := entity.COSINE
+		switch strings.ToUpper(strings.TrimSpace(conf.MilvusConfig.MetricType)) {
+		case "L2":
+			metric = entity.L2
+		case "IP":
+			metric = entity.IP
+		case "COSINE", "":
+			metric = entity.COSINE
+		}
+		store, err := aiVectordb.NewMilvusStore(initial.MilvusClient, strings.TrimSpace(conf.MilvusConfig.CollectionName), "vector", conf.MilvusConfig.VectorDim, metric)
+		if err != nil {
+			zlog.Warn("ai milvus store init failed: " + err.Error())
+		} else {
+			vs, err := aiVectordb.NewMilvusVectorStore(store)
+			if err != nil {
+				zlog.Warn("ai milvus vector store init failed: " + err.Error())
+			} else {
+				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
+				reader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
+				chunker := aiChunking.NewSimpleChunker(800, 120)
+				merger := aiTransform.NewChatTurnMerger()
+				embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
+				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
+				if err != nil {
+					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
+				} else {
+					ingestSvc := aiService.NewIngestService(reader, p)
+					aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
+				}
+			}
+		}
+	} else {
+		zlog.Warn("ai milvus client is nil; ai routes disabled")
+	}
 
 	userSvc := service.NewUserInfoService(userRepo)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow)
@@ -68,6 +116,9 @@ func init() {
 			"username": c.GetString("username"),
 		})
 	})
+	if aiAdminH != nil {
+		authed.POST("/ai/internal/rag/backfill", aiAdminH.Backfill)
+	}
 	authed.POST("/contact/getUserList", contactH.GetUserList)
 	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)
 	authed.POST("/contact/getContactInfo", contactH.GetContactInfo)

@@ -19,6 +19,46 @@ func NewRAGRepository(db *gorm.DB) repository.RAGRepository {
 	return &ragRepositoryImpl{db: db}
 }
 
+func (r *ragRepositoryImpl) GetChunkByChunkKey(ctx context.Context, chunkKey string) (*rag.AIKnowledgeChunk, error) {
+	var c rag.AIKnowledgeChunk
+	err := r.db.WithContext(ctx).Where("chunk_key = ?", chunkKey).Take(&c).Error
+	if err == nil {
+		return &c, nil
+	}
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return nil, err
+}
+
+func (r *ragRepositoryImpl) GetVectorRecordByVectorID(ctx context.Context, vectorID string) (*rag.AIVectorRecord, error) {
+	var vr rag.AIVectorRecord
+	err := r.db.WithContext(ctx).Where("vector_id = ?", vectorID).Take(&vr).Error
+	if err == nil {
+		return &vr, nil
+	}
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return nil, err
+}
+
+func (r *ragRepositoryImpl) GetVectorRecordByChunkID(ctx context.Context, chunkID int64) (*rag.AIVectorRecord, error) {
+	var vr rag.AIVectorRecord
+	err := r.db.WithContext(ctx).Where("chunk_id = ?", chunkID).Take(&vr).Error
+	if err == nil {
+		return &vr, nil
+	}
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return nil, err
+}
+
+func (r *ragRepositoryImpl) CreateVectorRecord(ctx context.Context, record *rag.AIVectorRecord) error {
+	return r.db.WithContext(ctx).Create(record).Error
+}
+
 // EnsureKnowledgeBase 使用 upsert 确保知识库存在，并返回 kb_id
 func (r *ragRepositoryImpl) EnsureKnowledgeBase(ctx context.Context, kb *rag.AIKnowledgeBase) (int64, error) {
 	// 使用 GORM 的 OnConflict 实现 upsert（对应 MySQL 的 ON DUPLICATE KEY UPDATE）
