@@ -19,24 +19,58 @@ func NewRAGRepository(db *gorm.DB) repository.RAGRepository {
 	return &ragRepositoryImpl{db: db}
 }
 
-// EnsureKnowledgeBase 使用 upsert 确保知识库存在
-func (r *ragRepositoryImpl) EnsureKnowledgeBase(ctx context.Context, kb *rag.AIKnowledgeBase) error {
+// EnsureKnowledgeBase 使用 upsert 确保知识库存在，并返回 kb_id
+func (r *ragRepositoryImpl) EnsureKnowledgeBase(ctx context.Context, kb *rag.AIKnowledgeBase) (int64, error) {
 	// 使用 GORM 的 OnConflict 实现 upsert（对应 MySQL 的 ON DUPLICATE KEY UPDATE）
 	// 通过唯一索引 uniq_ai_kb_owner（owner_type, owner_id, kb_type）定位记录
 	// 若已存在，则更新 updated_at/status/name
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "owner_type"}, {Name: "owner_id"}, {Name: "kb_type"}},
 		DoUpdates: clause.AssignmentColumns([]string{"updated_at", "status", "name"}),
 	}).Create(kb).Error
+	if err != nil {
+		return 0, err
+	}
+	if kb.Id != 0 {
+		return kb.Id, nil
+	}
+
+	var existing rag.AIKnowledgeBase
+	err = r.db.WithContext(ctx).
+		Select("id").
+		Where("owner_type = ? AND owner_id = ? AND kb_type = ?", kb.OwnerType, kb.OwnerId, kb.KBType).
+		Take(&existing).Error
+	if err != nil {
+		return 0, err
+	}
+	kb.Id = existing.Id
+	return existing.Id, nil
 }
 
-// EnsureKnowledgeSource 使用 upsert 确保数据源存在
-func (r *ragRepositoryImpl) EnsureKnowledgeSource(ctx context.Context, source *rag.AIKnowledgeSource) error {
-	// 通过唯一索引 uniq_ai_source（source_type, source_key）定位记录
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "source_type"}, {Name: "source_key"}},
+// EnsureKnowledgeSource 使用 upsert 确保数据源存在，并返回 source_id
+func (r *ragRepositoryImpl) EnsureKnowledgeSource(ctx context.Context, source *rag.AIKnowledgeSource) (int64, error) {
+	// 通过唯一索引 uniq_ai_source（kb_id, source_type, source_key, tenant_user_id）定位记录
+	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "kb_id"}, {Name: "source_type"}, {Name: "source_key"}, {Name: "tenant_user_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"updated_at", "status", "version", "acl_json"}),
 	}).Create(source).Error
+	if err != nil {
+		return 0, err
+	}
+	if source.Id != 0 {
+		return source.Id, nil
+	}
+
+	var existing rag.AIKnowledgeSource
+	err = r.db.WithContext(ctx).
+		Select("id").
+		Where("kb_id = ? AND source_type = ? AND source_key = ? AND tenant_user_id = ?", source.KBId, source.SourceType, source.SourceKey, source.TenantUserId).
+		Take(&existing).Error
+	if err != nil {
+		return 0, err
+	}
+	source.Id = existing.Id
+	return existing.Id, nil
 }
 
 // CreateChunkAndVectorRecord 使用事务把 chunk 与 vector_record 一起写入，保证原子性
