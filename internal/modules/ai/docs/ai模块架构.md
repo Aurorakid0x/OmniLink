@@ -6,10 +6,13 @@
   - rag/ ：RAG 领域（KnowledgeBase、Source、Chunk、Embedding、IngestEvent、检索查询/结果）
   - agent/ ：自定义 Agent 领域（Agent 配置、persona、绑定知识库、工具授权）
   - command/ ：智能指令领域（/todo 等解析后的意图、任务）
-  - repository/ ：以上领域的仓储接口（MySQL）、以及向量检索接口（VectorStore）
+  - repository/ ：以上领域的仓储接口（MySQL），以及向量检索抽象接口（VectorStore）
 - internal/modules/ai/infrastructure/
   - persistence/ ：GORM 实现（ai_* 表）
-  - vectordb/ ：Milvus（或 pgvector / ES 向量）实现，走统一接口，保证可替换
+  - vectordb/ ：向量库实现与适配层（以 Milvus 为例）
+    - milvus_store.go ：Milvus SDK 底层封装（不依赖 domain）
+    - milvus_vector_store.go ：实现 domain/repository.VectorStore（把 domain 类型映射到 milvus_store.go）
+    - milvus_eino.go ：Eino 适配（实现 Eino Indexer/Retriever，内部依赖 domain 的 VectorStore，底层可替换）
   - embedding/ ：embedding provider 实现（OpenAI/DeepSeek/火山/本地），走统一接口
   - queue/ ：异步入库队列（可以先用 DB outbox + 轮询 worker，后面换 MQ 不动上层）
   - pipeline/ ：入库流水线（“装载→切分→向量化→写入向量库→落库状态”），可借鉴 SuperBizAgent 的 graph 编排思路
