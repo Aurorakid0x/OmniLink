@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"OmniLink/internal/modules/ai/domain/rag"
+	"OmniLink/internal/modules/ai/domain/repository"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -14,7 +15,7 @@ type ragRepositoryImpl struct {
 	db *gorm.DB
 }
 
-func NewRAGRepository(db *gorm.DB) rag.RAGRepository {
+func NewRAGRepository(db *gorm.DB) repository.RAGRepository {
 	return &ragRepositoryImpl{db: db}
 }
 

@@ -10,6 +10,13 @@ import (
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 )
 
+// MilvusStore 是 Milvus SDK 的“底层封装层”。
+//
+// 分层说明：
+// - 本文件只负责把业务字段写入/从 Milvus 查询出来，并处理 Milvus SDK 的细节（列构造、Search 参数、结果解析）。
+// - 本文件不依赖 domain，也不实现 domain 的 repository.VectorStore。
+// - 若要在上层使用 domain 接口，请使用同目录下的 MilvusVectorStore（它实现 repository.VectorStore，并把 domain 类型映射到本文件的 UpsertItem/SearchHit）。
+
 type UpsertItem struct {
 	ID           string
 	Vector       []float32
