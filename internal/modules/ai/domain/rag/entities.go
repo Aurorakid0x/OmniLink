@@ -22,10 +22,10 @@ func (AIKnowledgeBase) TableName() string { return "ai_knowledge_base" }
 
 type AIKnowledgeSource struct {
 	Id           int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	KBId         int64     `gorm:"column:kb_id;index:idx_ai_source_kb;not null"`
+	KBId         int64     `gorm:"column:kb_id;index:idx_ai_source_kb;not null;uniqueIndex:uniq_ai_source"`
 	SourceType   string    `gorm:"column:source_type;type:varchar(30);not null;uniqueIndex:uniq_ai_source"`
 	SourceKey    string    `gorm:"column:source_key;type:varchar(128);not null;uniqueIndex:uniq_ai_source"`
-	TenantUserId string    `gorm:"column:tenant_user_id;type:char(20);not null;index:idx_ai_source_tenant"`
+	TenantUserId string    `gorm:"column:tenant_user_id;type:char(20);not null;index:idx_ai_source_tenant;uniqueIndex:uniq_ai_source"`
 	ACLJson      string    `gorm:"column:acl_json;type:json"`
 	Version      int       `gorm:"column:version;type:int;not null;default:1"`
 	Status       int8      `gorm:"column:status;type:tinyint;not null;default:1"`

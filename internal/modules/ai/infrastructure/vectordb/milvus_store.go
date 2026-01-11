@@ -81,9 +81,34 @@ func (s *MilvusStore) Upsert(ctx context.Context, items []UpsertItem) ([]string,
 		if it.ID == "" {
 			return nil, errors.New("upsert item missing ID")
 		}
+
+		// 校验必填维度（防止越权或数据混乱）
+		if it.TenantUserID == "" {
+			return nil, fmt.Errorf("upsert item missing TenantUserID for id=%s", it.ID)
+		}
+		if it.KBID == 0 {
+			return nil, fmt.Errorf("upsert item missing KBID for id=%s", it.ID)
+		}
+		if it.SourceType == "" {
+			return nil, fmt.Errorf("upsert item missing SourceType for id=%s", it.ID)
+		}
+		if it.SourceKey == "" {
+			return nil, fmt.Errorf("upsert item missing SourceKey for id=%s", it.ID)
+		}
+		if it.ChunkID == 0 {
+			return nil, fmt.Errorf("upsert item missing ChunkID for id=%s", it.ID)
+		}
+
 		if len(it.Vector) != s.vectorDim {
 			return nil, fmt.Errorf("vector dim mismatch for id=%s, got=%d want=%d", it.ID, len(it.Vector), s.vectorDim)
 		}
+
+		// 确保 MetadataJSON 是合法的 JSON
+		meta := strings.TrimSpace(it.MetadataJSON)
+		if meta == "" {
+			meta = "{}"
+		}
+
 		ids = append(ids, it.ID)
 		vectors = append(vectors, it.Vector)
 		tenantUserIDs = append(tenantUserIDs, it.TenantUserID)
@@ -92,7 +117,7 @@ func (s *MilvusStore) Upsert(ctx context.Context, items []UpsertItem) ([]string,
 		sourceKeys = append(sourceKeys, it.SourceKey)
 		chunkIDs = append(chunkIDs, it.ChunkID)
 		contents = append(contents, it.Content)
-		metas = append(metas, it.MetadataJSON)
+		metas = append(metas, meta)
 	}
 
 	_, err := s.cli.Upsert(
