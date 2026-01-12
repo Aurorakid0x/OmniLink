@@ -73,11 +73,11 @@ func init() {
 				zlog.Warn("ai milvus vector store init failed: " + err.Error())
 			} else {
 				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
-				reader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
-				chunker := aiChunking.NewSimpleChunker(800, 120)
-				merger := aiTransform.NewChatTurnMerger()
-				embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
-				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
+					reader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
+					chunker := aiChunking.NewSimpleChunker(800, 120)
+					merger := aiTransform.NewChatTurnMerger()
+					embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
+					p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
 				if err != nil {
 					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
 				} else {

@@ -13,10 +13,12 @@ import (
 	"OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/internal/modules/ai/infrastructure/chunking"
 	"OmniLink/internal/modules/ai/infrastructure/transform"
+	"OmniLink/internal/modules/ai/infrastructure/vectordb"
 	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	"OmniLink/pkg/zlog"
 
 	"github.com/cloudwego/eino/components/embedding"
+	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/compose"
 	"go.uber.org/zap"
 )
@@ -49,6 +51,7 @@ type IngestResult struct {
 type IngestPipeline struct {
 	repo       repository.RAGRepository
 	vs         repository.VectorStore
+	einoIndexer indexer.Indexer
 	embedder   embedding.Embedder
 	merger     *transform.ChatTurnMerger
 	chunker    *chunking.SimpleChunker
@@ -58,12 +61,12 @@ type IngestPipeline struct {
 }
 
 func NewIngestPipeline(repo repository.RAGRepository, vs repository.VectorStore, embedder embedding.Embedder, merger *transform.ChatTurnMerger, chunker *chunking.SimpleChunker, collection string, vectorDim int) (*IngestPipeline, error) {
-	p := &IngestPipeline{repo: repo, vs: vs, embedder: embedder, merger: merger, chunker: chunker, collection: collection, vectorDim: vectorDim}
-	g := compose.NewGraph[*IngestRequest, *IngestResult]()
-	_ = g.AddLambdaNode("Ingest", compose.InvokableLambdaWithOption(p.ingestNode), compose.WithNodeName("RAGIngest"))
-	_ = g.AddEdge(compose.START, "Ingest")
-	_ = g.AddEdge("Ingest", compose.END)
-	r, err := g.Compile(context.Background(), compose.WithGraphName("RAGIngestPipeline"), compose.WithNodeTriggerMode(compose.AllPredecessor))
+	einoIndexer, err := vectordb.NewEinoVectorStore(vs)
+	if err != nil {
+		return nil, err
+	}
+	p := &IngestPipeline{repo: repo, vs: vs, einoIndexer: einoIndexer, embedder: embedder, merger: merger, chunker: chunker, collection: collection, vectorDim: vectorDim}
+	r, err := p.buildGraph(context.Background())
 	if err != nil {
 		return nil, err
 	}

@@ -120,14 +120,15 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 			out.Messages += len(msgs)
 
 			pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SessionUUID: sess.SessionUUID, SessionType: int(sess.Type), SessionName: sess.Name, SourceType: sType, SourceKey: sess.TargetID, Messages: msgs})
+			if pr != nil {
+				out.Chunks += pr.Chunks
+				out.VectorsOK += pr.VectorsOK
+				out.VectorsSkip += pr.VectorsSkip
+				out.VectorsFail += pr.VectorsFail
+			}
 			if err != nil {
-				out.VectorsFail++
 				continue
 			}
-			out.Chunks += pr.Chunks
-			out.VectorsOK += pr.VectorsOK
-			out.VectorsSkip += pr.VectorsSkip
-			out.VectorsFail += pr.VectorsFail
 		}
 
 		out.Sessions++

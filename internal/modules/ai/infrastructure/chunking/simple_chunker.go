@@ -1,6 +1,11 @@
 package chunking
 
-import "math"
+import (
+	"context"
+	"math"
+
+	"github.com/cloudwego/eino/schema"
+)
 
 // SimpleChunker 将文本切分为固定大小、带重叠的多个片段
 type SimpleChunker struct {
@@ -61,4 +66,28 @@ func (c *SimpleChunker) Chunk(text string) []string {
 	}
 
 	return chunks
+}
+
+func (c *SimpleChunker) ChunkDocuments(ctx context.Context, docs []*schema.Document) ([]*schema.Document, error) {
+	_ = ctx
+	if len(docs) == 0 {
+		return []*schema.Document{}, nil
+	}
+
+	out := make([]*schema.Document, 0, len(docs))
+	for _, d := range docs {
+		if d == nil {
+			continue
+		}
+		parts := c.Chunk(d.Content)
+		for i, p := range parts {
+			n := &schema.Document{Content: p, MetaData: map[string]any{}}
+			for k, v := range d.MetaData {
+				n.MetaData[k] = v
+			}
+			n.MetaData["chunk_index"] = i
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }

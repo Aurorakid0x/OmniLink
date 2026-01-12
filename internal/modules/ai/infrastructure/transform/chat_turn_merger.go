@@ -34,10 +34,17 @@ func (m *ChatTurnMerger) Merge(messages []entity.Message) []string {
 		sessions[msg.SessionId] = append(sessions[msg.SessionId], msg)
 	}
 
+	sessionIDs := make([]string, 0, len(sessions))
+	for sid := range sessions {
+		sessionIDs = append(sessionIDs, sid)
+	}
+	sort.Strings(sessionIDs)
+
 	var result []string
 
 	// 2) 逐个会话处理
-	for _, sessionMsgs := range sessions {
+	for _, sid := range sessionIDs {
+		sessionMsgs := sessions[sid]
 		if len(sessionMsgs) == 0 {
 			continue
 		}
