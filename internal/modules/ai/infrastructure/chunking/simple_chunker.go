@@ -2,8 +2,12 @@ package chunking
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"sync"
 
+	"github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive"
+	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -11,23 +15,31 @@ import (
 type SimpleChunker struct {
 	ChunkSize    int
 	ChunkOverlap int
+	useRecursive bool
+
+	initOnce      sync.Once
+	initErr       error
+	recursiveImpl document.Transformer
 }
 
 // NewSimpleChunker 创建一个切片器，并设置切片大小与重叠长度
 func NewSimpleChunker(size, overlap int) *SimpleChunker {
 	if size <= 0 {
-		size = 500 // 默认切片大小
+		size = 500
 	}
 	if overlap < 0 {
 		overlap = 0
 	}
 	if overlap >= size {
-		overlap = size / 2 // 避免步长为 0 导致死循环
+		overlap = size / 2
 	}
-	return &SimpleChunker{
-		ChunkSize:    size,
-		ChunkOverlap: overlap,
-	}
+	return &SimpleChunker{ChunkSize: size, ChunkOverlap: overlap}
+}
+
+func NewRecursiveChunker(size, overlap int) *SimpleChunker {
+	c := NewSimpleChunker(size, overlap)
+	c.useRecursive = true
+	return c
 }
 
 // Chunk 基于 rune（字符）数量切分文本，确保中文等多字节字符不会被截断
@@ -69,9 +81,50 @@ func (c *SimpleChunker) Chunk(text string) []string {
 }
 
 func (c *SimpleChunker) ChunkDocuments(ctx context.Context, docs []*schema.Document) ([]*schema.Document, error) {
-	_ = ctx
 	if len(docs) == 0 {
 		return []*schema.Document{}, nil
+	}
+
+	if !c.useRecursive {
+		out := make([]*schema.Document, 0, len(docs))
+		for _, d := range docs {
+			if d == nil {
+				continue
+			}
+			parts := c.Chunk(d.Content)
+			for i, p := range parts {
+				n := &schema.Document{Content: p, MetaData: map[string]any{}}
+				for k, v := range d.MetaData {
+					n.MetaData[k] = v
+				}
+				n.MetaData["chunk_index"] = i
+				out = append(out, n)
+			}
+		}
+		return out, nil
+	}
+
+	c.initOnce.Do(func() {
+		impl, err := recursive.NewSplitter(ctx, &recursive.Config{
+			ChunkSize:   c.ChunkSize,
+			OverlapSize: c.ChunkOverlap,
+			Separators:  []string{"\n\n", "\n", "。", "！", "？", "；", "，", " "},
+			LenFunc: func(s string) int {
+				return len([]rune(s))
+			},
+			KeepType: recursive.KeepTypeEnd,
+		})
+		if err != nil {
+			c.initErr = err
+			return
+		}
+		c.recursiveImpl = impl
+	})
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
+	if c.recursiveImpl == nil {
+		return nil, fmt.Errorf("recursive splitter not initialized")
 	}
 
 	out := make([]*schema.Document, 0, len(docs))
@@ -79,9 +132,15 @@ func (c *SimpleChunker) ChunkDocuments(ctx context.Context, docs []*schema.Docum
 		if d == nil {
 			continue
 		}
-		parts := c.Chunk(d.Content)
-		for i, p := range parts {
-			n := &schema.Document{Content: p, MetaData: map[string]any{}}
+		frags, err := c.recursiveImpl.Transform(ctx, []*schema.Document{{Content: d.Content}})
+		if err != nil {
+			return nil, err
+		}
+		for i, f := range frags {
+			if f == nil {
+				continue
+			}
+			n := &schema.Document{Content: f.Content, MetaData: map[string]any{}}
 			for k, v := range d.MetaData {
 				n.MetaData[k] = v
 			}

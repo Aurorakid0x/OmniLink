@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/cloudwego/eino v0.5.7
+	github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive v0.0.0-20251011073417-75b93b87b8a9
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v5 v5.3.0

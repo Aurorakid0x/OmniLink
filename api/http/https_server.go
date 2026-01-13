@@ -74,7 +74,7 @@ func init() {
 			} else {
 				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
 					reader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
-					chunker := aiChunking.NewSimpleChunker(800, 120)
+					chunker := aiChunking.NewRecursiveChunker(800, 120)
 					merger := aiTransform.NewChatTurnMerger()
 					embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
 					p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
