@@ -354,3 +354,112 @@ M6：从同步入库升级为事件异步（ai_ingest_event + worker）→ 用�
 - 再做 Task 1（pipeline）先只写 MySQL chunk，不写 Milvus：确认 chunk 生成策略无 bug。
 - 再把 mock embedding + Milvus upsert 接上：完成入库闭环。
 - 最后做 Task 3：能检索出 chunks 就算胜利；LLM 生成回答放到最后做。
+
+
+
+### 第一部分：全域 RAG 数据源扩展技术方案
+你的目标是将结构化的“关系数据”（个人/好友/群组 Profile 与关系）转化为 RAG 可理解的“非结构化文档”。这需要从基础设施层到应用层进行系统化扩展。
+ 1. 基础设施层：完善数据库查询接口 (Infrastructure Layer)
+为了让 RAG 能“看到”这些信息，必须先在各业务模块的 Repository 中暴露批量查询能力。
+
+- 用户模块 (User Module)
+  
+  - 目标 ：获取自己或好友的详细 Profile（包括未来会有的个性签名）。
+  - 扩展 UserInfoRepository ：
+    - GetUserInfo(userID) : 获取单人完整信息（昵称、生日、签名、头像等）。
+    - GetBatchUserInfo(userIDs) : 批量获取（用于群成员详情或好友列表详情，避免 N+1 查询）。
+- 联系人模块 (Contact Module)
+  
+  - 目标 ：获取“我有多少好友”、“好友列表详情”。
+  - 扩展 ContactRepository ：
+    - ListContactsWithInfo(userID) : 获取某人的所有好友， 并联表查询 拿到好友的 UserInfo（昵称、签名等）和备注名（Remark）。RAG 需要知道“备注名”，因为用户只会问“老张是谁”，而不会问“User123是谁”。
+- 群组模块 (Group Module)
+  
+  - 目标 ：获取“我有多少群”、“群成员详情”。
+  - 扩展 GroupRepository ：
+    - ListJoinedGroups(userID) : 获取我加入的所有群（包括群名、公告、群主ID）。
+    - GetGroupMembersWithInfo(groupID) : 获取某群的所有成员列表， 并联表查询 拿到成员的 UserInfo 和群内昵称。这是回答“群里有xxx吗？”的关键。 2. 领域/基础设施层：新建专用 Reader (Domain/Infrastructure Layer)
+在 internal/modules/ai/infrastructure/reader/ 下新增针对结构化数据的 Reader。它们的职责是将数据库对象（Struct）转换成自然语言描述（String/Document）。
+
+- ContactProfileReader
+  
+  - 输入 ： tenant_user_id
+  - 逻辑 ：
+    1. 调用 ListContactsWithInfo 。
+    2. 生成 Document ：
+       - 策略 A（合并汇总） ：生成一篇“我的通讯录”文档。
+         - 内容示例 ：“我的好友列表如下：1. 张三（备注：老张），个性签名：‘厚德载物’，生日：1990-01-01。2. 李四，个性签名：‘前端大神’...”
+         - 适用场景 ：回答“我有多少好友”、“谁是做前端的”。
+       - 策略 B（单人单档） ：每个好友生成一个 Document。
+         - 内容示例 ：“好友详情：张三（备注：老张），UUID：U123，个性签名...”。
+         - 适用场景 ：精准检索某人详情。
+  - 建议 ： 策略 B 更好，利用元数据过滤更精准，且更新时只需重写单人。
+- GroupProfileReader
+  
+  - 输入 ： tenant_user_id
+  - 逻辑 ：
+    1. 调用 ListJoinedGroups 。
+    2. 针对每个群，调用 GetGroupMembersWithInfo 。
+    3. 生成 Document （每个群一个文档）：
+       - 内容示例 ：“群组档案：‘Golang交流群’（ID: G1001）。群公告：‘禁止发广告’。群主：王五。包含成员 50 人，活跃成员包括：赵六（签名：找工作）、钱七...”。
+- SelfProfileReader
+  
+  - 输入 ： tenant_user_id
+  - 逻辑 ：
+    1. 调用 GetUserInfo 。
+    2. 生成 Document ：
+       - 内容示例 ：“我的个人档案：昵称 ChenJun，生日 1995-05-20，个性签名‘Hello World’，注册时间 2024-01-01。” 3. 应用层：集成至 Ingest Service (Application Layer)
+- 修改 IngestService.Backfill
+  - 原有逻辑 ：只跑 SessionReader （聊天记录）。
+  - 新增逻辑 ：
+    - 并行（或顺序）调用 SelfProfileReader 、 ContactProfileReader 、 GroupProfileReader 。
+    - 将它们生成的 Documents 同样送入 pipeline.Ingest 。
+  - Pipeline 适配 ：
+    - Pipeline 需要识别 SourceType 。
+    - 如果 SourceType 是 contact_profile 或 group_profile ， Chunker 可能需要特殊配置（例如：不需要按 800 字切分，而是尽量保持完整，或者按条目切分）。目前的 RecursiveChunker 对这种结构化文本也适用（会按换行符切），所以暂时可以复用。
+### 第二部分：RAG 复用与隔离策略（针对 PRD 愿景）
+针对 PRD 中的其他 AI 功能（自定义 Agent、数字替身等）是否复用 RAG 及其隔离方案，我的建议是： “底层复用，逻辑隔离” 。
+ 1. 哪些功能会用到 RAG？
+根据 PRD，以下功能强依赖 RAG：
+
+- 全域 RAG（全局助手） ：查所有权限内数据。
+- 自定义 Agent（私有知识库） ：用户上传 PDF/文档，Agent 基于此回答。
+- 数字替身（模仿学习） ：检索特定好友的历史语料来模仿语气。 2. 复用策略：共用一套基建与表结构
+不需要 为每个功能建一套新的向量库或 MySQL 表。目前的架构（ ai_knowledge_base / source / chunk / vector ）已经完全能够支撑。
+
+- 复用点 ：
+  - Milvus Collection ( ai_kb_vectors ) ：所有向量都存这里，不用建新表。
+  - Pipeline ( IngestPipeline ) ：入库流程是一样的（读 -> 切 -> 存）。
+  - Search Logic ：检索逻辑是一样的（Embedding -> Search -> Filter）。 3. 隔离策略：通过 KBId 和 SourceType 实现逻辑隔离
+通过数据打标（Metadata）来实现业务上的隔离，而不是物理分库。
+
+- 全域 RAG（全局助手）
+  
+  - KBType : global
+  - KBId : 1 (假设每个用户有一个默认的 Global KB)
+  - 检索范围 ： kb_id = 1 AND tenant_user_id = me
+- 自定义 Agent（私有知识库）
+  
+  - 场景 ：你建了一个“法律顾问 Agent”，上传了《民法典.pdf》。
+  - 存储 ：
+    - KBType : agent_private
+    - OwnerId : AgentUUID (或者 UserUUID 但标记为 Agent 专用)
+    - KBId : 2 (新生成的 ID)
+    - SourceType : file_upload
+  - 检索 ：
+    - 当用户跟这个 Agent 聊天时，检索条件强制加上： kb_id = 2 。
+    - 这样它 只能 搜到《民法典》，绝对搜不到你的聊天记录或好友列表。
+- 数字替身（模仿学习）
+  
+  - 场景 ：模仿“张三”的语气。
+  - 存储 ：其实复用的是全域 RAG 里的聊天记录数据。
+  - 检索 ：
+    - 不需要重新入库。
+    - 检索时加条件： kb_id = 1 AND source_type = chat_private AND source_key = 张三的UUID 。
+    - 这样 AI 就只看到你和张三的对话，从而学习他的语气。 4. 结论：怎么整最好？
+1. 坚持“大宽表”思想 ：Milvus 里只维护一个 ai_kb_vectors ，通过 kb_id 、 source_type 、 owner_id 区分一切。
+2. Pipeline 保持通用 ：入库 Pipeline 不需要知道它是“全域助手”还是“法律 Agent”，它只管把 Document 变成 Vector。业务含义由 Request 中的 KBId 和 SourceType 决定。
+3. Service 层做业务分发 ：
+   - GlobalAssistantService ：调用 Search 时，查 KBType=global。
+   - AgentService ：调用 Search 时，查 KBId=Agent对应的KBId。
+这种方案维护成本最低，扩展性最强。未来如果要加“群聊摘要 RAG”，也只是加一种检索过滤条件而已。
