@@ -27,7 +27,8 @@ func init() {
 	host := conf.MysqlConfig.Host
 	port := conf.MysqlConfig.Port
 	appName := conf.AppName
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, password, host, port, appName)
+	zlog.Info(fmt.Sprintf("mysql connecting: %s:%d/%s", host, port, appName))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s&readTimeout=10s&writeTimeout=10s", user, password, host, port, appName)
 	//dsn := fmt.Sprintf("%s@unix(/var/run/mysqld/mysqld.sock)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, appName)
 	var err error
 	gormLogger := logger.New(

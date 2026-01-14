@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"OmniLink/internal/config"
 	"OmniLink/pkg/zlog"
@@ -21,10 +22,12 @@ func init() {
 		return
 	}
 
-	ctx := context.Background()
+	zlog.Info(fmt.Sprintf("milvus connecting: %s", addr))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	cli, err := newMilvusClientAndEnsureSchema(ctx, conf)
 	if err != nil {
-		zlog.Fatal(fmt.Sprintf("milvus init failed: %v", err))
+		zlog.Error(fmt.Sprintf("milvus init failed: %v", err)) // 修改为 Error，避免连接失败导致整个服务崩溃
 		return
 	}
 	MilvusClient = cli

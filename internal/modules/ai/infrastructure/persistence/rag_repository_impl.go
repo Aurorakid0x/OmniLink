@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"OmniLink/internal/modules/ai/domain/rag"
@@ -89,6 +90,9 @@ func (r *ragRepositoryImpl) EnsureKnowledgeBase(ctx context.Context, kb *rag.AIK
 
 // EnsureKnowledgeSource 使用 upsert 确保数据源存在，并返回 source_id
 func (r *ragRepositoryImpl) EnsureKnowledgeSource(ctx context.Context, source *rag.AIKnowledgeSource) (int64, error) {
+	if source != nil && strings.TrimSpace(source.ACLJson) == "" {
+		source.ACLJson = "{}"
+	}
 	// 通过唯一索引 uniq_ai_source（kb_id, source_type, source_key, tenant_user_id）定位记录
 	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "kb_id"}, {Name: "source_type"}, {Name: "source_key"}, {Name: "tenant_user_id"}},
