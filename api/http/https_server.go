@@ -59,6 +59,7 @@ func init() {
 
 	conf := config.GetConfig()
 	var aiAdminH *aiHTTP.AdminHandler
+	var aiAsyncIngest aiService.AsyncIngestService
 	if initial.MilvusClient != nil {
 		metric := entity.COSINE
 		switch strings.ToUpper(strings.TrimSpace(conf.MilvusConfig.MetricType)) {
@@ -111,6 +112,7 @@ func init() {
 				} else {
 					ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, jobRepo, eventRepo)
 					aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
+					aiAsyncIngest = aiService.NewAsyncIngestService(eventRepo)
 
 					consumer, err := aiKafka.NewConsumer(aiKafka.ConsumerConfig{
 						Brokers:  conf.KafkaConfig.Brokers,
@@ -136,11 +138,11 @@ func init() {
 	}
 
 	userSvc := service.NewUserInfoService(userRepo)
-	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow)
-	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow)
+	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow, aiAsyncIngest)
+	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow, aiAsyncIngest)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
-	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo)
+	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, aiAsyncIngest)
 
 	userH := userHandler.NewUserInfoHandler(userSvc)
 	contactH := contactHandler.NewContactHandler(contactSvc, wsHub)

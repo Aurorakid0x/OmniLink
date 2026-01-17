@@ -148,7 +148,6 @@ func (r *ragRepositoryImpl) UpdateVectorStatus(ctx context.Context, vectorID str
 		updates["error_msg"] = errorMsg
 	}
 
-	// 成功时记录 embedded_at，便于后续增量/重跑
 	if status == 1 {
 		updates["embedded_at"] = time.Now()
 	}
@@ -156,4 +155,75 @@ func (r *ragRepositoryImpl) UpdateVectorStatus(ctx context.Context, vectorID str
 	return r.db.WithContext(ctx).Model(&rag.AIVectorRecord{}).
 		Where("vector_id = ?", vectorID).
 		Updates(updates).Error
+}
+
+func (r *ragRepositoryImpl) GetKnowledgeSource(ctx context.Context, kbID int64, tenantUserID, sourceType, sourceKey string) (*rag.AIKnowledgeSource, error) {
+	var src rag.AIKnowledgeSource
+	err := r.db.WithContext(ctx).
+		Where("kb_id = ? AND tenant_user_id = ? AND source_type = ? AND source_key = ?", kbID, strings.TrimSpace(tenantUserID), strings.TrimSpace(sourceType), strings.TrimSpace(sourceKey)).
+		Take(&src).Error
+	if err == nil {
+		return &src, nil
+	}
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return nil, err
+}
+
+func (r *ragRepositoryImpl) ListVectorIDsBySourceID(ctx context.Context, sourceID int64) ([]string, error) {
+	if sourceID <= 0 {
+		return []string{}, nil
+	}
+	var ids []string
+	err := r.db.WithContext(ctx).
+		Table("ai_vector_record AS vr").
+		Joins("JOIN ai_knowledge_chunk AS c ON c.id = vr.chunk_id").
+		Where("c.source_id = ?", sourceID).
+		Pluck("vr.vector_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []string{}, nil
+	}
+	out := make([]string, 0, len(ids))
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func (r *ragRepositoryImpl) DeleteChunksAndVectorRecordsBySourceID(ctx context.Context, sourceID int64) error {
+	if sourceID <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		sub := tx.Model(&rag.AIKnowledgeChunk{}).Select("id").Where("source_id = ?", sourceID)
+		if err := tx.Where("chunk_id IN (?)", sub).Delete(&rag.AIVectorRecord{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_id = ?", sourceID).Delete(&rag.AIKnowledgeChunk{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *ragRepositoryImpl) UpdateKnowledgeSourceStatus(ctx context.Context, sourceID int64, status int8) error {
+	if sourceID <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&rag.AIKnowledgeSource{}).
+		Where("id = ?", sourceID).
+		Updates(map[string]any{"status": status, "updated_at": time.Now()}).Error
 }

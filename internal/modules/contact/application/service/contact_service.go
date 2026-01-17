@@ -1,6 +1,13 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	aiIngest "OmniLink/internal/modules/ai/application/service"
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
 	contactRespond "OmniLink/internal/modules/contact/application/dto/respond"
 	contactEntity "OmniLink/internal/modules/contact/domain/entity"
@@ -9,10 +16,6 @@ import (
 	"OmniLink/pkg/util"
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
-	"encoding/json"
-	"errors"
-	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -32,14 +35,16 @@ type contactServiceImpl struct {
 	applyRepo   contactRepository.ContactApplyRepository
 	userRepo    userRepository.UserInfoRepository
 	uow         contactRepository.ContactUnitOfWork
+	aiIngest    aiIngest.AsyncIngestService
 }
 
-func NewContactService(contactRepo contactRepository.UserContactRepository, applyRepo contactRepository.ContactApplyRepository, userRepo userRepository.UserInfoRepository, uow contactRepository.ContactUnitOfWork) ContactService {
+func NewContactService(contactRepo contactRepository.UserContactRepository, applyRepo contactRepository.ContactApplyRepository, userRepo userRepository.UserInfoRepository, uow contactRepository.ContactUnitOfWork, aiIngestSvc aiIngest.AsyncIngestService) ContactService {
 	return &contactServiceImpl{
 		contactRepo: contactRepo,
 		applyRepo:   applyRepo,
 		userRepo:    userRepo,
 		uow:         uow,
+		aiIngest:    aiIngestSvc,
 	}
 }
 
@@ -173,7 +178,13 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 	}
 
 	now := time.Now()
-	return s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+	var friendA string
+	var friendB string
+	var groupID string
+	var groupMembers []string
+	var groupApplicant string
+
+	err := s.uow.Transaction(func(applyRepo contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		apply, err := applyRepo.GetContactApplyByUUIDForUpdate(req.ApplyId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -236,6 +247,8 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 				zlog.Error(err.Error())
 				return xerr.ErrServerError
 			}
+			friendA = apply.UserId
+			friendB = apply.ContactId
 			return nil
 		}
 
@@ -290,6 +303,7 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 				for _, m := range allMembers {
 					allIDs = append(allIDs, m.UserId)
 				}
+				groupMembers = append([]string(nil), allIDs...)
 				membersJSON, _ := json.Marshal(allIDs)
 				group.Members = membersJSON
 				group.MemberCnt = len(allIDs)
@@ -299,11 +313,34 @@ func (s *contactServiceImpl) PassContactApply(req contactRequest.PassContactAppl
 				}
 			}
 
+			groupID = apply.ContactId
+			groupApplicant = apply.UserId
 			return nil
 		}
 
 		return xerr.New(xerr.BadRequest, "不支持的申请类型")
 	})
+	if err != nil {
+		return err
+	}
+
+	if s.aiIngest != nil {
+		if friendA != "" && friendB != "" {
+			_ = s.aiIngest.EnqueueContactProfile(context.Background(), friendA, friendB)
+			_ = s.aiIngest.EnqueueContactProfile(context.Background(), friendB, friendA)
+		}
+		if groupID != "" {
+			members := groupMembers
+			if len(members) == 0 && groupApplicant != "" {
+				members = []string{groupApplicant}
+			}
+			for _, uid := range members {
+				_ = s.aiIngest.EnqueueGroupProfile(context.Background(), uid, groupID)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContactApplyRequest) error {
@@ -331,11 +368,12 @@ func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContact
 			return xerr.New(xerr.Forbidden, "该申请已被拉黑")
 		}
 
-		if apply.ContactType == 0 {
+		switch apply.ContactType {
+		case 0:
 			if apply.ContactId != req.OwnerId {
 				return xerr.New(xerr.Forbidden, "无权操作该申请")
 			}
-		} else if apply.ContactType == 1 {
+		case 1:
 			group, err := groupRepo.GetGroupInfoByUUID(apply.ContactId)
 			if err != nil {
 				return err
@@ -343,7 +381,7 @@ func (s *contactServiceImpl) RefuseContactApply(req contactRequest.RefuseContact
 			if group.OwnerId != req.OwnerId {
 				return xerr.New(xerr.Forbidden, "只有群主可以审批")
 			}
-		} else {
+		default:
 			return xerr.New(xerr.BadRequest, "不支持的申请类型")
 		}
 

@@ -79,6 +79,52 @@ func (p *IngestPipeline) Ingest(ctx context.Context, req IngestRequest) (*Ingest
 	return p.r.Invoke(ctx, &req)
 }
 
+func (p *IngestPipeline) PurgeSource(ctx context.Context, tenantUserID, sourceType, sourceKey string, disableSource bool) error {
+	if p == nil || p.repo == nil || p.vs == nil {
+		return fmt.Errorf("pipeline repo/vs is nil")
+	}
+	tenant := strings.TrimSpace(tenantUserID)
+	sourceType = strings.TrimSpace(sourceType)
+	sourceKey = strings.TrimSpace(sourceKey)
+	if tenant == "" || sourceType == "" || sourceKey == "" {
+		return fmt.Errorf("missing tenant/source")
+	}
+
+	now := time.Now()
+	kb := &rag.AIKnowledgeBase{OwnerType: "user", OwnerId: tenant, KBType: "global", Name: "global", Status: rag.CommonStatusEnabled, CreatedAt: now, UpdatedAt: now}
+	kbID, err := p.repo.EnsureKnowledgeBase(ctx, kb)
+	if err != nil {
+		return err
+	}
+
+	src, err := p.repo.GetKnowledgeSource(ctx, kbID, tenant, sourceType, sourceKey)
+	if err != nil {
+		return err
+	}
+	if src == nil || src.Id <= 0 {
+		return nil
+	}
+
+	ids, err := p.repo.ListVectorIDsBySourceID(ctx, src.Id)
+	if err != nil {
+		return err
+	}
+	if len(ids) > 0 {
+		if err := p.vs.DeleteByIDs(ctx, ids); err != nil {
+			return err
+		}
+	}
+	if err := p.repo.DeleteChunksAndVectorRecordsBySourceID(ctx, src.Id); err != nil {
+		return err
+	}
+	if disableSource {
+		if err := p.repo.UpdateKnowledgeSourceStatus(ctx, src.Id, rag.CommonStatusDisabled); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *IngestPipeline) ingestNode(ctx context.Context, req *IngestRequest, _ ...any) (*IngestResult, error) {
 	start := time.Now()
 	if req == nil {

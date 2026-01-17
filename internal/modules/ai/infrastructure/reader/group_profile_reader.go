@@ -55,6 +55,9 @@ func (r *GroupProfileReader) ReadGroupProfile(ctx context.Context, tenantUserID,
 	if g == nil {
 		return "", "", nil
 	}
+	if g.Status == 2 {
+		return "", "", nil
+	}
 
 	members, err := r.contactRepo.GetGroupMembersWithInfo(gid)
 	if err != nil {

@@ -1,11 +1,13 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	aiIngest "OmniLink/internal/modules/ai/application/service"
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
 	contactRespond "OmniLink/internal/modules/contact/application/dto/respond"
 	contactEntity "OmniLink/internal/modules/contact/domain/entity"
@@ -32,6 +34,7 @@ type GroupService interface {
 type groupServiceImpl struct {
 	userRepo userRepository.UserInfoRepository
 	uow      contactRepository.ContactUnitOfWork
+	aiIngest aiIngest.AsyncIngestService
 }
 
 func NewGroupService(
@@ -39,10 +42,12 @@ func NewGroupService(
 	_ contactRepository.GroupInfoRepository,
 	userRepo userRepository.UserInfoRepository,
 	uow contactRepository.ContactUnitOfWork,
+	aiIngestSvc aiIngest.AsyncIngestService,
 ) GroupService {
 	return &groupServiceImpl{
 		userRepo: userRepo,
 		uow:      uow,
+		aiIngest: aiIngestSvc,
 	}
 }
 
@@ -179,6 +184,12 @@ func (s *groupServiceImpl) CreateGroup(req contactRequest.CreateGroupRequest) (*
 		return nil, err
 	}
 
+	if s.aiIngest != nil {
+		for _, uid := range memberIDs {
+			_ = s.aiIngest.EnqueueGroupProfile(context.Background(), uid, groupID)
+		}
+	}
+
 	return &contactRespond.CreateGroupRespond{
 		Uuid:      group.Uuid,
 		GroupId:   group.Uuid,
@@ -289,7 +300,8 @@ func (s *groupServiceImpl) InviteGroupMembers(req contactRequest.InviteGroupMemb
 		return nil
 	}
 
-	return s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+	var updatedMembers []string
+	err := s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		group, err := groupRepo.GetGroupInfoByUUID(req.GroupId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -357,6 +369,7 @@ func (s *groupServiceImpl) InviteGroupMembers(req contactRequest.InviteGroupMemb
 				for _, m := range allMembers {
 					allIDs = append(allIDs, m.UserId)
 				}
+				updatedMembers = append([]string(nil), allIDs...)
 				membersJSON, _ := json.Marshal(allIDs)
 				group.Members = membersJSON
 				group.MemberCnt = len(allIDs)
@@ -371,10 +384,22 @@ func (s *groupServiceImpl) InviteGroupMembers(req contactRequest.InviteGroupMemb
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	if s.aiIngest != nil {
+		for _, uid := range updatedMembers {
+			_ = s.aiIngest.EnqueueGroupProfile(context.Background(), uid, req.GroupId)
+		}
+	}
+
+	return nil
 }
 
 func (s *groupServiceImpl) LeaveGroup(req contactRequest.LeaveGroupRequest) error {
-	return s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+	var remainingMembers []string
+	returnErr := s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		group, err := groupRepo.GetGroupInfoByUUID(req.GroupId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -426,13 +451,29 @@ func (s *groupServiceImpl) LeaveGroup(req contactRequest.LeaveGroupRequest) erro
 		group.Members = membersJSON
 		group.MemberCnt = len(newMembers)
 		group.UpdatedAt = time.Now()
+		remainingMembers = append([]string(nil), newMembers...)
 
 		return groupRepo.UpdateGroupInfo(group)
 	})
+	if returnErr != nil {
+		return returnErr
+	}
+
+	if s.aiIngest != nil {
+		_ = s.aiIngest.EnqueueGroupProfile(context.Background(), req.OwnerId, req.GroupId)
+		for _, uid := range remainingMembers {
+			_ = s.aiIngest.EnqueueGroupProfile(context.Background(), uid, req.GroupId)
+		}
+	}
+
+	return nil
 }
 
 func (s *groupServiceImpl) DismissGroup(req contactRequest.DismissGroupRequest) error {
-	return s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+	var members []string
+	var groupID string
+
+	err := s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		group, err := groupRepo.GetGroupInfoByUUID(req.GroupId)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -452,8 +493,25 @@ func (s *groupServiceImpl) DismissGroup(req contactRequest.DismissGroupRequest) 
 			return xerr.New(xerr.Forbidden, "群组状态异常，无法解散")
 		}
 
+		groupID = group.Uuid
+		_ = json.Unmarshal(group.Members, &members)
+
 		group.Status = 2
 		group.UpdatedAt = time.Now()
 		return groupRepo.UpdateGroupInfo(group)
 	})
+	if err != nil {
+		return err
+	}
+
+	if s.aiIngest != nil {
+		for _, uid := range members {
+			if strings.TrimSpace(uid) == "" {
+				continue
+			}
+			_ = s.aiIngest.EnqueueGroupProfile(context.Background(), uid, groupID)
+		}
+	}
+
+	return nil
 }

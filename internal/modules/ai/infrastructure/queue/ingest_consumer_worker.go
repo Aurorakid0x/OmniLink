@@ -194,13 +194,22 @@ func (w *IngestConsumerWorker) processEvent(ctx context.Context, ev *rag.AIInges
 		if gid == "" {
 			return errors.New("missing group_id")
 		}
+
 		doc, _, err := w.groupReader.ReadGroupProfile(ctx, ev.TenantUserId, gid)
 		if err != nil {
 			return err
 		}
 		doc = strings.TrimSpace(doc)
+
 		if doc == "" {
+			if err := w.pipeline.PurgeSource(ctx, ev.TenantUserId, "group_profile", gid, true); err != nil {
+				return err
+			}
 			return nil
+		}
+
+		if err := w.pipeline.PurgeSource(ctx, ev.TenantUserId, "group_profile", gid, false); err != nil {
+			return err
 		}
 		_, err = w.pipeline.Ingest(ctx, pipeline.IngestRequest{
 			TenantUserID: ev.TenantUserId,

@@ -1,10 +1,13 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
+	aiIngest "OmniLink/internal/modules/ai/application/service"
 	chatRequest "OmniLink/internal/modules/chat/application/dto/request"
 	chatRespond "OmniLink/internal/modules/chat/application/dto/respond"
 	chatEntity "OmniLink/internal/modules/chat/domain/entity"
@@ -29,6 +32,7 @@ type realtimeServiceImpl struct {
 	contactRepo contactRepository.UserContactRepository
 	userRepo    userRepository.UserInfoRepository
 	groupRepo   contactRepository.GroupInfoRepository
+	aiIngest    aiIngest.AsyncIngestService
 }
 
 func NewRealtimeService(
@@ -37,6 +41,7 @@ func NewRealtimeService(
 	contactRepo contactRepository.UserContactRepository,
 	userRepo userRepository.UserInfoRepository,
 	groupRepo contactRepository.GroupInfoRepository,
+	aiIngestSvc aiIngest.AsyncIngestService,
 ) RealtimeService {
 	return &realtimeServiceImpl{
 		messageRepo: messageRepo,
@@ -44,6 +49,7 @@ func NewRealtimeService(
 		contactRepo: contactRepo,
 		userRepo:    userRepo,
 		groupRepo:   groupRepo,
+		aiIngest:    aiIngestSvc,
 	}
 }
 
@@ -141,6 +147,36 @@ func (s *realtimeServiceImpl) SendPrivateMessage(senderID string, req chatReques
 	}
 	_ = s.sessionRepo.UpdateLastMessageBySendAndReceive(senderID, req.ReceiveId, lastMessage, now)
 	_ = s.sessionRepo.UpdateLastMessageBySendAndReceive(req.ReceiveId, senderID, lastMessage, now)
+
+	if s.aiIngest != nil && msg.Type == 0 && strings.TrimSpace(msg.Content) != "" {
+		since := msg.CreatedAt.Add(-5 * time.Second)
+		_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiIngest.ChatMessagesPageRequest{
+			TenantUserID: senderID,
+			SessionUUID:  sessSender.Uuid,
+			SessionType:  1,
+			SessionName:  sessSender.ReceiveName,
+			TargetID:     req.ReceiveId,
+			Page:         1,
+			PageSize:     50,
+			Since:        &since,
+			SourceType:   "chat_private",
+			SourceKey:    req.ReceiveId,
+			DedupExtra:   msg.Uuid,
+		})
+		_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiIngest.ChatMessagesPageRequest{
+			TenantUserID: req.ReceiveId,
+			SessionUUID:  sessReceiver.Uuid,
+			SessionType:  1,
+			SessionName:  sessReceiver.ReceiveName,
+			TargetID:     senderID,
+			Page:         1,
+			PageSize:     50,
+			Since:        &since,
+			SourceType:   "chat_private",
+			SourceKey:    senderID,
+			DedupExtra:   msg.Uuid,
+		})
+	}
 
 	senderItem := &chatRespond.MessageItem{
 		Uuid:       msg.Uuid,
@@ -263,9 +299,9 @@ func (s *realtimeServiceImpl) SendGroupMessage(senderID string, req chatRequest.
 		lastMessage = "[多媒体消息]"
 	}
 
+	sessUUIDByUser := make(map[string]string, len(memberIDs))
 	for _, uid := range memberIDs {
-		// 检查会话是否存在，不存在则创建
-		_, err := s.sessionRepo.GetBySendAndReceive(uid, req.ReceiveId)
+		sess, err := s.sessionRepo.GetBySendAndReceive(uid, req.ReceiveId)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			newSess := &chatEntity.Session{
 				Uuid:          util.GenerateSessionID(),
@@ -278,8 +314,35 @@ func (s *realtimeServiceImpl) SendGroupMessage(senderID string, req chatRequest.
 				CreatedAt:     now,
 			}
 			_ = s.sessionRepo.Create(newSess)
+			sessUUIDByUser[uid] = newSess.Uuid
 		} else {
+			if err == nil && sess != nil {
+				sessUUIDByUser[uid] = sess.Uuid
+			}
 			_ = s.sessionRepo.UpdateLastMessageBySendAndReceive(uid, req.ReceiveId, lastMessage, now)
+		}
+	}
+
+	if s.aiIngest != nil && msg.Type == 0 && strings.TrimSpace(msg.Content) != "" {
+		since := msg.CreatedAt.Add(-5 * time.Second)
+		for _, uid := range memberIDs {
+			sessUUID := strings.TrimSpace(sessUUIDByUser[uid])
+			if sessUUID == "" {
+				continue
+			}
+			_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiIngest.ChatMessagesPageRequest{
+				TenantUserID: uid,
+				SessionUUID:  sessUUID,
+				SessionType:  2,
+				SessionName:  group.Name,
+				TargetID:     req.ReceiveId,
+				Page:         1,
+				PageSize:     50,
+				Since:        &since,
+				SourceType:   "chat_group",
+				SourceKey:    req.ReceiveId,
+				DedupExtra:   msg.Uuid,
+			})
 		}
 	}
 
