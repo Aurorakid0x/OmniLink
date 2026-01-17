@@ -41,11 +41,21 @@ type MilvusConfig struct {
 	MetricType     string `toml:"metricType"`
 }
 
+type KafkaConfig struct {
+	Brokers         []string `toml:"brokers"`
+	ClientID        string   `toml:"clientID"`
+	IngestTopic     string   `toml:"ingestTopic"`
+	ConsumerGroupID string   `toml:"consumerGroupID"`
+	Partitions      int32    `toml:"partitions"`
+	Replication     int16    `toml:"replication"`
+}
+
 type Config struct {
 	MainConfig   `toml:"mainConfig"`
 	MysqlConfig  `toml:"mysqlConfig"`
 	JwtConfig    `toml:"jwtConfig"`
 	MilvusConfig `toml:"milvusConfig"`
+	KafkaConfig  `toml:"kafkaConfig"`
 	LogConfig    `toml:"logConfig"`
 }
 

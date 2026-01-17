@@ -39,12 +39,15 @@ type IngestService interface {
 }
 
 type ingestService struct {
-	reader   *reader.ChatSessionReader
-	pipeline *pipeline.IngestPipeline
+	chatReader    *reader.ChatSessionReader
+	selfReader    *reader.SelfProfileReader
+	contactReader *reader.ContactProfileReader
+	groupReader   *reader.GroupProfileReader
+	pipeline      *pipeline.IngestPipeline
 }
 
-func NewIngestService(r *reader.ChatSessionReader, p *pipeline.IngestPipeline) IngestService {
-	return &ingestService{reader: r, pipeline: p}
+func NewIngestService(chat *reader.ChatSessionReader, self *reader.SelfProfileReader, contact *reader.ContactProfileReader, group *reader.GroupProfileReader, p *pipeline.IngestPipeline) IngestService {
+	return &ingestService{chatReader: chat, selfReader: self, contactReader: contact, groupReader: group, pipeline: p}
 }
 
 func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*BackfillResult, error) {
@@ -70,7 +73,80 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 		return nil, xerr.New(xerr.BadRequest, "invalid until")
 	}
 
-	sessions, err := s.reader.ListAllSessions(ctx, tenant)
+	out := &BackfillResult{TenantUserID: tenant}
+
+	if s.selfReader != nil {
+		doc, err := s.selfReader.ReadProfile(ctx, tenant)
+		if err != nil {
+			zlog.Warn("ai backfill self profile read failed", zap.String("tenant_user_id", tenant), zap.Error(err))
+		} else {
+			doc = strings.TrimSpace(doc)
+			if doc != "" {
+				pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SourceType: "self_profile", SourceKey: tenant, Documents: []string{doc}})
+				if pr != nil {
+					out.Chunks += pr.Chunks
+					out.VectorsOK += pr.VectorsOK
+					out.VectorsSkip += pr.VectorsSkip
+					out.VectorsFail += pr.VectorsFail
+				}
+				if err != nil {
+					zlog.Warn("ai backfill self profile ingest failed", zap.String("tenant_user_id", tenant), zap.Error(err))
+				}
+			}
+		}
+	}
+
+	if s.contactReader != nil {
+		items, err := s.contactReader.ListContactProfiles(ctx, tenant)
+		if err != nil {
+			zlog.Warn("ai backfill contact profile list failed", zap.String("tenant_user_id", tenant), zap.Error(err))
+		} else {
+			for _, it := range items {
+				cid := strings.TrimSpace(it.ContactID)
+				content := strings.TrimSpace(it.Content)
+				if cid == "" || content == "" {
+					continue
+				}
+				pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SourceType: "contact_profile", SourceKey: cid, Documents: []string{content}})
+				if pr != nil {
+					out.Chunks += pr.Chunks
+					out.VectorsOK += pr.VectorsOK
+					out.VectorsSkip += pr.VectorsSkip
+					out.VectorsFail += pr.VectorsFail
+				}
+				if err != nil {
+					zlog.Warn("ai backfill contact profile ingest failed", zap.String("tenant_user_id", tenant), zap.String("source_key", cid), zap.Error(err))
+				}
+			}
+		}
+	}
+
+	if s.groupReader != nil {
+		items, err := s.groupReader.ListGroupProfiles(ctx, tenant)
+		if err != nil {
+			zlog.Warn("ai backfill group profile list failed", zap.String("tenant_user_id", tenant), zap.Error(err))
+		} else {
+			for _, it := range items {
+				gid := strings.TrimSpace(it.GroupID)
+				content := strings.TrimSpace(it.Content)
+				if gid == "" || content == "" {
+					continue
+				}
+				pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SourceType: "group_profile", SourceKey: gid, Documents: []string{content}})
+				if pr != nil {
+					out.Chunks += pr.Chunks
+					out.VectorsOK += pr.VectorsOK
+					out.VectorsSkip += pr.VectorsSkip
+					out.VectorsFail += pr.VectorsFail
+				}
+				if err != nil {
+					zlog.Warn("ai backfill group profile ingest failed", zap.String("tenant_user_id", tenant), zap.String("source_key", gid), zap.Error(err))
+				}
+			}
+		}
+	}
+
+	sessions, err := s.chatReader.ListAllSessions(ctx, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +160,6 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 		maxPages = 0
 	}
 
-	out := &BackfillResult{TenantUserID: tenant}
 	for i := 0; i < maxSessions; i++ {
 		sess := sessions[i]
 		sType := "chat_group"
@@ -97,7 +172,7 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 			if maxPages > 0 && pages >= maxPages {
 				break
 			}
-			msgs, err := s.reader.ReadMessages(ctx, tenant, sess, page, pageSize, since)
+			msgs, err := s.chatReader.ReadMessages(ctx, tenant, sess, page, pageSize, since)
 			if err != nil {
 				out.VectorsFail++
 				break

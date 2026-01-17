@@ -57,12 +57,7 @@ func init() {
 		&aiRag.AIKnowledgeChunk{},
 		&aiRag.AIVectorRecord{},
 		&aiRag.AIIngestEvent{},
-		&aiRag.AIChatSession{},
-		&aiRag.AIChatMessage{},
-		&aiRag.AIAgent{},
-		&aiRag.AIToolRegistry{},
-		&aiRag.AIAgentToolBinding{},
-		&aiRag.AIUploadedFile{},
+		&aiRag.AIBackfillJob{},
 	)
 	// 自动迁移，如果没有建表，会自动创建对应的表
 	if err != nil {

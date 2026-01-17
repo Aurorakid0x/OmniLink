@@ -1,14 +1,19 @@
 package http
 
 import (
+	"context"
+	"time"
+
 	"OmniLink/internal/config"
 	"OmniLink/internal/initial"
 	jwtMiddleware "OmniLink/internal/middleware/jwt"
 	aiService "OmniLink/internal/modules/ai/application/service"
 	aiChunking "OmniLink/internal/modules/ai/infrastructure/chunking"
 	aiEmbedding "OmniLink/internal/modules/ai/infrastructure/embedding"
+	aiKafka "OmniLink/internal/modules/ai/infrastructure/mq/kafka"
 	aiPersistence "OmniLink/internal/modules/ai/infrastructure/persistence"
 	aiPipeline "OmniLink/internal/modules/ai/infrastructure/pipeline"
+	aiQueue "OmniLink/internal/modules/ai/infrastructure/queue"
 	aiReader "OmniLink/internal/modules/ai/infrastructure/reader"
 	aiTransform "OmniLink/internal/modules/ai/infrastructure/transform"
 	aiVectordb "OmniLink/internal/modules/ai/infrastructure/vectordb"
@@ -73,15 +78,33 @@ func init() {
 				zlog.Warn("ai milvus vector store init failed: " + err.Error())
 			} else {
 				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
-					reader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
-					chunker := aiChunking.NewRecursiveChunker(800, 120)
-					merger := aiTransform.NewChatTurnMerger()
-					embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
-					p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
+
+				eventRepo := aiPersistence.NewIngestEventRepository(initial.GormDB)
+				pub, err := aiKafka.NewPublisher(conf.KafkaConfig.Brokers)
+				if err != nil {
+					zlog.Warn("ai kafka publisher init failed: " + err.Error())
+				} else {
+					relay := aiQueue.NewOutboxRelay(eventRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
+					ctx := context.Background()
+					go func() {
+						if err := relay.Run(ctx); err != nil {
+							zlog.Warn("ai outbox relay stopped: " + err.Error())
+						}
+					}()
+				}
+
+				chatReader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
+				selfReader := aiReader.NewSelfProfileReader(userRepo)
+				contactReader := aiReader.NewContactProfileReader(contactRepo, userRepo)
+				groupReader := aiReader.NewGroupProfileReader(groupRepo, contactRepo, userRepo)
+				chunker := aiChunking.NewRecursiveChunker(800, 120)
+				merger := aiTransform.NewChatTurnMerger()
+				embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
+				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
 				if err != nil {
 					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
 				} else {
-					ingestSvc := aiService.NewIngestService(reader, p)
+					ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, p)
 					aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
 				}
 			}

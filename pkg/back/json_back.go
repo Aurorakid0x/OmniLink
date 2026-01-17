@@ -50,15 +50,16 @@ func Error(c *gin.Context, code int, message string) {
 
 // Deprecated: JsonBack 是旧的返回方法，建议使用 Result
 func JsonBack(c *gin.Context, message string, ret int, data interface{}) {
-	if ret == 0 {
+	switch ret {
+	case 0:
 		c.JSON(http.StatusOK, Response{
 			Code:    xerr.OK,
 			Message: message,
 			Data:    data,
 		})
-	} else if ret == -2 {
+	case -2:
 		Error(c, xerr.BadRequest, message)
-	} else if ret == -1 {
+	case -1:
 		Error(c, xerr.InternalServerError, message)
 	}
 }

@@ -31,6 +31,7 @@ type IngestRequest struct {
 	SourceType   string
 	SourceKey    string
 	Messages     []chatEntity.Message
+	Documents    []string
 }
 
 type IngestResult struct {
@@ -103,7 +104,17 @@ func (p *IngestPipeline) ingestNode(ctx context.Context, req *IngestRequest, _ .
 		return nil, err
 	}
 
-	segments := p.merger.Merge(req.Messages)
+	var segments []string
+	if len(req.Documents) > 0 {
+		for _, d := range req.Documents {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				segments = append(segments, d)
+			}
+		}
+	} else {
+		segments = p.merger.Merge(req.Messages)
+	}
 	chunks := make([]string, 0, 8)
 	for _, seg := range segments {
 		seg = strings.TrimSpace(seg)

@@ -152,7 +152,16 @@ func (p *IngestPipeline) mergeTurnsNode(ctx context.Context, st *ingestState, _ 
 		return st, nil
 	}
 
-	segments := p.merger.Merge(st.Req.Messages)
+	var segments []string
+	if len(st.Req.Documents) > 0 {
+		segments = st.Req.Documents
+	} else {
+		if p.merger == nil {
+			st.Err = fmt.Errorf("merger is nil")
+			return st, nil
+		}
+		segments = p.merger.Merge(st.Req.Messages)
+	}
 	docs := make([]*schema.Document, 0, len(segments))
 	segIndex := 0
 	for _, seg := range segments {

@@ -44,23 +44,27 @@ func (r *userInfoRepositoryImpl) GetUserInfoByUsername(username string) (*entity
 	return &user, nil
 }
 
-func (r *userInfoRepositoryImpl) GetUserInfoByUUID(uuid string) (*entity.UserInfo, error) {
+func (r *userInfoRepositoryImpl) GetUserInfoByUUIDWithoutPassword(uuid string) (*entity.UserInfo, error) {
 	var user entity.UserInfo
-	// Omit password for security
-	err := r.db.Omit("password").Where("uuid = ?", uuid).First(&user).Error
+	// Use Select to explicitly fetch safe fields, excluding password
+	err := r.db.Select("id, uuid, username, nickname, avatar, gender, signature, birthday, created_at, last_online_at, last_offline_at, is_admin, status").
+		Where("uuid = ?", uuid).
+		First(&user).Error
 	if err != nil {
 		return nil, err
 	}
 	return &user, nil
 }
 
-func (r *userInfoRepositoryImpl) GetBatchUserInfo(uuids []string) ([]entity.UserInfo, error) {
+func (r *userInfoRepositoryImpl) GetBatchUserInfoWithoutPassword(uuids []string) ([]entity.UserInfo, error) {
 	if len(uuids) == 0 {
 		return []entity.UserInfo{}, nil
 	}
 	var users []entity.UserInfo
-	// Omit password for security
-	err := r.db.Omit("password").Where("uuid IN ?", uuids).Find(&users).Error
+	// Use Select to explicitly fetch safe fields, excluding password
+	err := r.db.Select("id, uuid, username, nickname, avatar, gender, signature, birthday, created_at, last_online_at, last_offline_at, is_admin, status").
+		Where("uuid IN ?", uuids).
+		Find(&users).Error
 	if err != nil {
 		return nil, err
 	}
