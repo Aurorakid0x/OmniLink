@@ -13,6 +13,7 @@ import (
 	"OmniLink/internal/modules/ai/infrastructure/mq"
 	"OmniLink/internal/modules/ai/infrastructure/pipeline"
 	"OmniLink/internal/modules/ai/infrastructure/reader"
+	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	"OmniLink/pkg/zlog"
 
 	"go.uber.org/zap"
@@ -281,24 +282,66 @@ func (w *IngestConsumerWorker) processEvent(ctx context.Context, ev *rag.AIInges
 			Type:        reader.SessionType(p.SessionType),
 			Name:        strings.TrimSpace(p.SessionName),
 		}
-		msgs, err := w.chatReader.ReadMessages(ctx, ev.TenantUserId, sess, page, pageSize, since)
-		if err != nil {
-			return err
-		}
-		if until != nil {
-			filtered := msgs[:0]
-			for _, m := range msgs {
-				if !m.CreatedAt.After(*until) {
-					filtered = append(filtered, m)
+
+		msgs := make([]chatEntity.Message, 0, pageSize)
+
+		if !ev.BackfillJobId.Valid {
+			maxPages := 50
+			for cur := 1; cur <= maxPages; cur++ {
+				raw, err := w.chatReader.ReadMessagesPage(ctx, ev.TenantUserId, sess, cur, pageSize)
+				if err != nil {
+					return err
+				}
+				if len(raw) == 0 {
+					break
+				}
+
+				pageMsgs, err := w.chatReader.ReadMessages(ctx, ev.TenantUserId, sess, cur, pageSize, since)
+				if err != nil {
+					return err
+				}
+				if until != nil {
+					filtered := pageMsgs[:0]
+					for _, m := range pageMsgs {
+						if !m.CreatedAt.After(*until) {
+							filtered = append(filtered, m)
+						}
+					}
+					pageMsgs = filtered
+				}
+				if len(pageMsgs) > 0 {
+					msgs = append(msgs, pageMsgs...)
+				}
+
+				if since != nil {
+					oldest := raw[len(raw)-1].CreatedAt
+					if !oldest.After(*since) {
+						break
+					}
 				}
 			}
-			msgs = filtered
+		} else {
+			pageMsgs, err := w.chatReader.ReadMessages(ctx, ev.TenantUserId, sess, page, pageSize, since)
+			if err != nil {
+				return err
+			}
+			if until != nil {
+				filtered := pageMsgs[:0]
+				for _, m := range pageMsgs {
+					if !m.CreatedAt.After(*until) {
+						filtered = append(filtered, m)
+					}
+				}
+				pageMsgs = filtered
+			}
+			msgs = append(msgs, pageMsgs...)
 		}
+
 		if len(msgs) == 0 {
 			return nil
 		}
 
-		_, err = w.pipeline.Ingest(ctx, pipeline.IngestRequest{
+		_, err := w.pipeline.Ingest(ctx, pipeline.IngestRequest{
 			TenantUserID: ev.TenantUserId,
 			SessionUUID:  sessUUID,
 			SessionType:  p.SessionType,

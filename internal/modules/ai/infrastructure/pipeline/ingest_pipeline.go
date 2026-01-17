@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -150,33 +151,79 @@ func (p *IngestPipeline) ingestNode(ctx context.Context, req *IngestRequest, _ .
 		return nil, err
 	}
 
-	var segments []string
+	type chunkItem struct {
+		unitKey string
+		subIdx  int
+		msg     *chatEntity.Message
+		content string
+	}
+
+	chunks := make([]chunkItem, 0, 64)
+
 	if len(req.Documents) > 0 {
-		for _, d := range req.Documents {
+		for di, d := range req.Documents {
 			d = strings.TrimSpace(d)
-			if d != "" {
-				segments = append(segments, d)
+			if d == "" {
+				continue
+			}
+			parts := p.chunker.Chunk(d)
+			for si, part := range parts {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				chunks = append(chunks, chunkItem{unitKey: fmt.Sprintf("doc_%d", di), subIdx: si, content: part})
+			}
+		}
+	} else if req.SourceType == "chat_private" || req.SourceType == "chat_group" {
+		msgs := make([]chatEntity.Message, 0, len(req.Messages))
+		for _, m := range req.Messages {
+			if m.Type != 0 {
+				continue
+			}
+			m.Content = strings.TrimSpace(m.Content)
+			if m.Content == "" {
+				continue
+			}
+			msgs = append(msgs, m)
+		}
+		sort.Slice(msgs, func(i, j int) bool {
+			if msgs[i].CreatedAt.Equal(msgs[j].CreatedAt) {
+				return msgs[i].Uuid < msgs[j].Uuid
+			}
+			return msgs[i].CreatedAt.Before(msgs[j].CreatedAt)
+		})
+		for _, m := range msgs {
+			mm := m
+			text := fmt.Sprintf("%s(%s): %s", strings.TrimSpace(mm.SendName), mm.CreatedAt.Format("15:04:05"), mm.Content)
+			parts := p.chunker.Chunk(text)
+			for si, part := range parts {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				chunks = append(chunks, chunkItem{unitKey: strings.TrimSpace(mm.Uuid), subIdx: si, msg: &mm, content: part})
 			}
 		}
 	} else {
-		segments = p.merger.Merge(req.Messages)
-	}
-	chunks := make([]string, 0, 8)
-	for _, seg := range segments {
-		seg = strings.TrimSpace(seg)
-		if seg == "" {
-			continue
-		}
-		parts := p.chunker.Chunk(seg)
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				chunks = append(chunks, part)
+		segments := p.merger.Merge(req.Messages)
+		for gi, seg := range segments {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				continue
+			}
+			parts := p.chunker.Chunk(seg)
+			for si, part := range parts {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				chunks = append(chunks, chunkItem{unitKey: fmt.Sprintf("seg_%d", gi), subIdx: si, content: part})
 			}
 		}
 	}
 
-	res := &IngestResult{TenantUserID: tenant, SourceType: req.SourceType, SourceKey: req.SourceKey, KBID: kbID, SourceID: sourceID, Messages: len(req.Messages), Segments: len(segments), Chunks: len(chunks)}
+	res := &IngestResult{TenantUserID: tenant, SourceType: req.SourceType, SourceKey: req.SourceKey, KBID: kbID, SourceID: sourceID, Messages: len(req.Messages), Segments: 0, Chunks: len(chunks)}
 	if len(chunks) == 0 {
 		res.DurationMs = time.Since(start).Milliseconds()
 		return res, nil
@@ -191,10 +238,20 @@ func (p *IngestPipeline) ingestNode(ctx context.Context, req *IngestRequest, _ .
 	}
 	items := make([]upsertItem, 0, len(chunks))
 
-	for i, content := range chunks {
+	for i := range chunks {
+		content := chunks[i].content
 		chash := sha256Hex(content)
-		ckey := "ck_" + sha256Hex(fmt.Sprintf("%s|%s|%s|%d|%s", tenant, req.SourceType, req.SourceKey, i, chash))
+		unitKey := strings.TrimSpace(chunks[i].unitKey)
+		if unitKey == "" {
+			unitKey = fmt.Sprintf("idx_%d", i)
+		}
+		ckey := "ck_" + sha256Hex(fmt.Sprintf("%s|%s|%s|%s|%d|%s", tenant, req.SourceType, req.SourceKey, unitKey, chunks[i].subIdx, chash))
 		vid := "v_" + sha256Hex(fmt.Sprintf("%s|%s|%s|%s|%d", tenant, req.SourceType, req.SourceKey, ckey, p.vectorDim))[:48]
+
+		metaJSON := safeMeta(req, i)
+		if chunks[i].msg != nil {
+			metaJSON = safeChatMsgMeta(req, i, *chunks[i].msg)
+		}
 
 		existingChunk, err := p.repo.GetChunkByChunkKey(ctx, ckey)
 		if err != nil {
@@ -218,11 +275,11 @@ func (p *IngestPipeline) ingestNode(ctx context.Context, req *IngestRequest, _ .
 					continue
 				}
 			}
-			items = append(items, upsertItem{VectorID: vid, ChunkID: existingChunk.Id, Content: truncate4096(content), MetaJSON: safeMeta(req, i), TextForEmb: content})
+			items = append(items, upsertItem{VectorID: vid, ChunkID: existingChunk.Id, Content: truncate4096(content), MetaJSON: metaJSON, TextForEmb: content})
 			continue
 		}
 
-		chunk := &rag.AIKnowledgeChunk{KBId: kbID, SourceId: sourceID, ChunkKey: ckey, ChunkIndex: i, Content: content, ContentHash: chash, MetadataJson: safeMeta(req, i), Status: rag.CommonStatusEnabled, CreatedAt: now, UpdatedAt: now}
+		chunk := &rag.AIKnowledgeChunk{KBId: kbID, SourceId: sourceID, ChunkKey: ckey, ChunkIndex: i, Content: content, ContentHash: chash, MetadataJson: metaJSON, Status: rag.CommonStatusEnabled, CreatedAt: now, UpdatedAt: now}
 		record := &rag.AIVectorRecord{VectorStore: "milvus", Collection: p.collection, VectorId: vid, EmbeddingProvider: "mock", EmbeddingModel: "mock", Dim: p.vectorDim, EmbedStatus: rag.VectorEmbedStatusPending, CreatedAt: now, UpdatedAt: now}
 		if err := p.repo.CreateChunkAndVectorRecord(ctx, chunk, record); err != nil {
 			res.VectorsFail++
@@ -301,6 +358,28 @@ func truncate4096(s string) string {
 
 func safeMeta(req *IngestRequest, chunkIndex int) string {
 	m := map[string]any{"session_uuid": req.SessionUUID, "session_type": req.SessionType, "session_name": req.SessionName, "chunk_index": chunkIndex}
+	bs, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	if len(bs) == 0 {
+		return "{}"
+	}
+	return string(bs)
+}
+
+func safeChatMsgMeta(req *IngestRequest, chunkIndex int, msg chatEntity.Message) string {
+	m := map[string]any{
+		"session_uuid": req.SessionUUID,
+		"session_type": req.SessionType,
+		"session_name": req.SessionName,
+		"chunk_index":  chunkIndex,
+		"message_uuid": strings.TrimSpace(msg.Uuid),
+		"message_time": msg.CreatedAt.Format(time.RFC3339),
+		"send_id":      strings.TrimSpace(msg.SendId),
+		"send_name":    strings.TrimSpace(msg.SendName),
+		"receive_id":   strings.TrimSpace(msg.ReceiveId),
+	}
 	bs, err := json.Marshal(m)
 	if err != nil {
 		return "{}"

@@ -83,44 +83,41 @@ func (r *ChatSessionReader) ListAllSessions(ctx context.Context, userID string) 
 // It filters out non-text messages and empty content.
 // Note: Messages are returned in DESC order (Newest first) as per underlying repo.
 // 分页读取消息，并执行核心过滤逻辑
-func (r *ChatSessionReader) ReadMessages(ctx context.Context, userID string, session ChatSessionItem, page, pageSize int, since *time.Time) ([]entity.Message, error) {
+func (r *ChatSessionReader) ReadMessagesPage(ctx context.Context, userID string, session ChatSessionItem, page, pageSize int) ([]entity.Message, error) {
 	var messages []entity.Message
 	var err error
 
-	// 1. 根据会话类型调用不同的底层接口
 	if session.Type == SessionTypePrivate {
-		// 私聊需要两个人的ID来确定范围
 		messages, err = r.messageRepo.ListPrivateMessages(userID, session.TargetID, page, pageSize)
 	} else {
-		// 群聊只需要 GroupID
 		messages, err = r.messageRepo.ListGroupMessages(session.TargetID, page, pageSize)
 	}
 
 	if err != nil {
 		return nil, err
 	}
+	return messages, nil
+}
 
-	// 2. 执行过滤逻辑
+func (r *ChatSessionReader) ReadMessages(ctx context.Context, userID string, session ChatSessionItem, page, pageSize int, since *time.Time) ([]entity.Message, error) {
+	messages, err := r.ReadMessagesPage(ctx, userID, session, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
 	var filtered []entity.Message
 	for _, msg := range messages {
-		// 过滤 1: 只读文本消息 (Type=0)
 		if msg.Type != 0 {
 			continue
 		}
-
-		// 过滤 2: 过滤空内容
 		if strings.TrimSpace(msg.Content) == "" {
 			continue
 		}
-
-		// 过滤 3: 增量更新检查 (Since)
-		// 如果指定了 since 时间，且消息时间不晚于 since，则跳过
 		if since != nil {
 			if !msg.CreatedAt.After(*since) {
 				continue
 			}
 		}
-
 		filtered = append(filtered, msg)
 	}
 
