@@ -84,10 +84,16 @@ func init() {
 				if err != nil {
 					zlog.Warn("ai kafka publisher init failed: " + err.Error())
 				} else {
+					// 1. 启动前显式创建/检查 Topic，确保分区数符合预期
+					_ = aiKafka.EnsureTopic(aiKafka.TopicAdminConfig{
+						Brokers:  conf.KafkaConfig.Brokers,
+						ClientID: conf.KafkaConfig.ClientID,
+					}, strings.TrimSpace(conf.KafkaConfig.IngestTopic), conf.KafkaConfig.Partitions, conf.KafkaConfig.Replication)
+
+					// 2. 初始化并启动 Outbox Relay
 					relay := aiQueue.NewOutboxRelay(eventRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
-					ctx := context.Background()
 					go func() {
-						if err := relay.Run(ctx); err != nil {
+						if err := relay.Run(context.Background()); err != nil {
 							zlog.Warn("ai outbox relay stopped: " + err.Error())
 						}
 					}()
