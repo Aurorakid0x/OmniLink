@@ -43,6 +43,21 @@ func (r *userContactRepositoryImpl) GetUserContactByUserIDAndContactIDAndType(us
 	return &contact, nil
 }
 
+func (r *userContactRepositoryImpl) ListContactsWithInfo(userID string) ([]entity.ContactWithUserInfo, error) {
+	var contacts []entity.ContactWithUserInfo
+	// Join user_contact and user_info
+	// user_contact.contact_id -> user_info.uuid
+	err := r.db.Table("user_contact").
+		Select("user_contact.*, user_info.nickname, user_info.avatar, user_info.signature").
+		Joins("JOIN user_info ON user_contact.contact_id = user_info.uuid").
+		Where("user_contact.user_id = ? AND user_contact.contact_type = 0", userID).
+		Find(&contacts).Error
+	if err != nil {
+		return nil, err
+	}
+	return contacts, nil
+}
+
 func (r *userContactRepositoryImpl) GetGroupMembers(groupID string) ([]entity.UserContact, error) {
 	var contacts []entity.UserContact
 	err := r.db.Where("contact_id = ? AND contact_type = ? AND deleted_at IS NULL AND status NOT IN ?", groupID, 1, []int8{6, 7}).Find(&contacts).Error
@@ -50,6 +65,21 @@ func (r *userContactRepositoryImpl) GetGroupMembers(groupID string) ([]entity.Us
 		return nil, err
 	}
 	return contacts, nil
+}
+
+func (r *userContactRepositoryImpl) GetGroupMembersWithInfo(groupID string) ([]entity.ContactWithUserInfo, error) {
+	var members []entity.ContactWithUserInfo
+	// Join user_contact and user_info
+	// user_contact.user_id -> user_info.uuid (because in group, contact_id is group_id, user_id is member_id)
+	err := r.db.Table("user_contact").
+		Select("user_contact.*, user_info.nickname, user_info.avatar, user_info.signature").
+		Joins("JOIN user_info ON user_contact.user_id = user_info.uuid").
+		Where("user_contact.contact_id = ? AND user_contact.contact_type = 1 AND user_contact.deleted_at IS NULL AND user_contact.status NOT IN ?", groupID, []int8{6, 7}).
+		Find(&members).Error
+	if err != nil {
+		return nil, err
+	}
+	return members, nil
 }
 
 func (r *userContactRepositoryImpl) CreateUserContact(contact *entity.UserContact) error {

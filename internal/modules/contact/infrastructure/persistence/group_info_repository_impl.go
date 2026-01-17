@@ -40,3 +40,17 @@ func (r *groupInfoRepositoryImpl) ListByOwnerID(ownerID string) ([]entity.GroupI
 	}
 	return groups, nil
 }
+
+func (r *groupInfoRepositoryImpl) ListJoinedGroups(userID string) ([]entity.GroupInfo, error) {
+	var groups []entity.GroupInfo
+	// Join user_contact and group_info
+	// user_contact.contact_id -> group_info.uuid
+	err := r.db.Table("group_info").
+		Joins("JOIN user_contact ON group_info.uuid = user_contact.contact_id").
+		Where("user_contact.user_id = ? AND user_contact.contact_type = 1 AND user_contact.status NOT IN ?", userID, []int8{6, 7}). // 6: quit, 7: kicked
+		Find(&groups).Error
+	if err != nil {
+		return nil, err
+	}
+	return groups, nil
+}

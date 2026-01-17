@@ -44,6 +44,29 @@ func (r *userInfoRepositoryImpl) GetUserInfoByUsername(username string) (*entity
 	return &user, nil
 }
 
+func (r *userInfoRepositoryImpl) GetUserInfoByUUID(uuid string) (*entity.UserInfo, error) {
+	var user entity.UserInfo
+	// Omit password for security
+	err := r.db.Omit("password").Where("uuid = ?", uuid).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *userInfoRepositoryImpl) GetBatchUserInfo(uuids []string) ([]entity.UserInfo, error) {
+	if len(uuids) == 0 {
+		return []entity.UserInfo{}, nil
+	}
+	var users []entity.UserInfo
+	// Omit password for security
+	err := r.db.Omit("password").Where("uuid IN ?", uuids).Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
 func (r *userInfoRepositoryImpl) GetUserBriefByUUIDs(uuids []string) ([]entity.UserBrief, error) {
 	if len(uuids) == 0 {
 		return []entity.UserBrief{}, nil

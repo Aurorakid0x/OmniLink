@@ -19,7 +19,9 @@ Agent Action (Function Calling)：
 
 场景：用户指令“帮我给王五发个消息说我不去了”、“帮我加入‘Golang交流群’”，AI 自动执行操作。
 
-扩展性：未来需支持备忘录读写、日程管理等工具调用。
+技术实现（MCP）：采用 Model Context Protocol (MCP) 架构。OmniLink 作为一个 MCP Client，连接内置或外部的 MCP Servers（如 IM-Action-Server）。
+
+扩展性：通过 MCP 协议，未来可零代码修改接入 GitHub、Notion、Google Calendar 等外部工具。
 
 2.2 模块二：自定义 AI Agent 工厂 (Customizable AI Agents)
 定义：用户创建和配置的独立 AI 实体。
@@ -62,7 +64,7 @@ Agent Action (Function Calling)：
 
 NLP 解析：支持自然语言参数。例如 /todo 明早10点提醒我开会。
 
-任务调度：AI 解析时间与意图，创建定时任务。任务触发时，由 模块一（全局助手） 进行消息推送提醒。
+任务调度：AI 解析时间与意图，通过 MCP 调用日历/提醒服务。任务触发时，由 模块一（全局助手） 进行消息推送提醒。
 
 3. 非功能性需求 (Non-functional Requirements)
 架构一致性：AI 模块必须融入现有的 Golang 项目目录结构，避免破坏原有代码的整洁性。
@@ -212,11 +214,25 @@ M6：从同步入库升级为事件异步（ai_ingest_event + worker）→ 用�
 - 没有引用信息：回答再好也无法解释来源，后续无法做“可信度/可追溯”。
 
 4.9 与后续 PRD 功能的衔接（保证不删改）
-- Agent Action / 工具调用：在“LLM Answer”阶段引入 Tool/Function Calling，仅新增工具注册与执行模块，不改 RAG 入库/检索。
+- Agent Action / 工具调用：将采用 MCP (Model Context Protocol) 架构。
+  - 核心 IM 操作（发消息/加群）：封装为内置的 MCP Server（In-Process 或 独立进程均可）。
+  - 外部扩展（日历/文件）：直接连接社区现成的 MCP Server。
+  - 衔接点：在“LLM Answer”阶段，LLM 输出工具调用指令，由 MCP Client 转发给对应 Server。
 - 自定义 Agent / 私有知识库：复用同一套 Ingest Pipeline，只是 SourceReader 从“消息”换成“用户上传文件”，KBId 切换为 agent 专属。
 - 群聊摘要/输入辅助：复用 Query Embed + Retrieve，但会有更严格的延迟与流式输出要求，可在 application 层新增一个“轻量链路”，不动底层 store 与表结构。
 
-4.10 下一次开发的“第一周任务清单”（照着做就不会晕）
+4.10 MCP 架构落地指引（新增）
+未来开发 MCP 功能时的部署形态选择：
+1. 内置 MCP Server (推荐起步)：
+   - 场景：操作 IM 内部数据（发消息、查联系人）。
+   - 实现：在 OmniLink 单体进程内，启动一个 Goroutine 运行 MCP Server 逻辑，通过 stdio 或 pipe 与主程序（LLM Client）通信。
+   - 优势：无 RPC 开销，部署简单（不需要额外部署微服务），开发体验像写本地函数。
+2. 独立 MCP Server (进阶)：
+   - 场景：耗资源任务（爬虫）、外部服务对接（GitHub/Notion）。
+   - 实现：独立部署的 Go/Python 服务，OmniLink 通过网络连接它。
+   - 优势：故障隔离，不拖累主进程；可复用社区现成 Docker 镜像。
+
+4.11 下一次开发的“第一周任务清单”（照着做就不会晕）
 - 任务 1：把“读取消息 → 生成 chunk → mock embedding → 写 Milvus + MySQL”串成一次可运行的 Ingest Pipeline（先只支持私聊消息）。
 - 任务 2：做一个内部回填入口（HTTP/命令二选一），能对指定 user_id 扫历史消息分页入库。
 - 任务 3：做检索接口：query → embedding → Milvus search → 返回命中 chunks（先不接 LLM）。
@@ -363,26 +379,24 @@ M6：从同步入库升级为事件异步（ai_ingest_event + worker）→ 用�
 为了让 RAG 能“看到”这些信息，必须先在各业务模块的 Repository 中暴露批量查询能力。
 
 - 用户模块 (User Module)
-  
-  - 目标 ：获取自己或好友的详细 Profile（包括未来会有的个性签名）。
+  - 目标 ：获取自己或好友的详细 Profile（包括表结构中有，但是还没开放用户自己设置的个性签名）。
   - 扩展 UserInfoRepository ：
     - GetUserInfo(userID) : 获取单人完整信息（昵称、生日、签名、头像等）。
     - GetBatchUserInfo(userIDs) : 批量获取（用于群成员详情或好友列表详情，避免 N+1 查询）。
 - 联系人模块 (Contact Module)
-  
   - 目标 ：获取“我有多少好友”、“好友列表详情”。
   - 扩展 ContactRepository ：
-    - ListContactsWithInfo(userID) : 获取某人的所有好友， 并联表查询 拿到好友的 UserInfo（昵称、签名等）和备注名（Remark）。RAG 需要知道“备注名”，因为用户只会问“老张是谁”，而不会问“User123是谁”。
+    - ListContactsWithInfo(userID) : 获取某人的所有好友， 并联表查询 拿到好友的 UserInfo（昵称、签名等）。RAG 需要知道“昵称”，因为用户只会问“老张是谁”，而不会问“User123是谁”。
 - 群组模块 (Group Module)
-  
   - 目标 ：获取“我有多少群”、“群成员详情”。
   - 扩展 GroupRepository ：
     - ListJoinedGroups(userID) : 获取我加入的所有群（包括群名、公告、群主ID）。
-    - GetGroupMembersWithInfo(groupID) : 获取某群的所有成员列表， 并联表查询 拿到成员的 UserInfo 和群内昵称。这是回答“群里有xxx吗？”的关键。 2. 领域/基础设施层：新建专用 Reader (Domain/Infrastructure Layer)
+    - GetGroupMembersWithInfo(groupID) : 获取某群的所有成员列表， 并联表查询 拿到成员的 UserInfo 和群内昵称。这是回答“群里有xxx吗？”的关键。 
+    
+2. 领域/基础设施层：新建专用 Reader (Domain/Infrastructure Layer)
 在 internal/modules/ai/infrastructure/reader/ 下新增针对结构化数据的 Reader。它们的职责是将数据库对象（Struct）转换成自然语言描述（String/Document）。
 
 - ContactProfileReader
-  
   - 输入 ： tenant_user_id
   - 逻辑 ：
     1. 调用 ListContactsWithInfo 。

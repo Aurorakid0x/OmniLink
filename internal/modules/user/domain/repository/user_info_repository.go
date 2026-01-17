@@ -11,6 +11,8 @@ type UserInfoRepository interface {
 	CreateUserInfo(user *entity.UserInfo) error
 	GetUserInfoById(id int64) (*entity.UserInfo, error)
 	GetUserInfoByUsername(username string) (*entity.UserInfo, error)
+	GetUserInfoByUUID(uuid string) (*entity.UserInfo, error)
+	GetBatchUserInfo(uuids []string) ([]entity.UserInfo, error)
 	GetUserBriefByUUIDs(uuids []string) ([]entity.UserBrief, error)
 	GetUserContactInfoByUUIDs(uuids []string) ([]contact.UserContactInfo, error)
 }

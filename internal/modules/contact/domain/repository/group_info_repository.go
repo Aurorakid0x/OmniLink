@@ -7,4 +7,5 @@ type GroupInfoRepository interface {
 	UpdateGroupInfo(group *entity.GroupInfo) error
 	GetGroupInfoByUUID(uuid string) (*entity.GroupInfo, error)
 	ListByOwnerID(ownerID string) ([]entity.GroupInfo, error)
+	ListJoinedGroups(userID string) ([]entity.GroupInfo, error)
 }
