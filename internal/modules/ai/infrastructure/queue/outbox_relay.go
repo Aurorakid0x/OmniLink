@@ -14,14 +14,15 @@ import (
 )
 
 type OutboxRelay struct {
-	repo         repository.IngestEventRepository
+	eventRepo    repository.IngestEventRepository
+	jobRepo      repository.BackfillJobRepository
 	pub          mq.Publisher
 	defaultTopic string
 	batchSize    int
 	pollInterval time.Duration
 }
 
-func NewOutboxRelay(repo repository.IngestEventRepository, pub mq.Publisher, defaultTopic string, batchSize int, pollInterval time.Duration) *OutboxRelay {
+func NewOutboxRelay(eventRepo repository.IngestEventRepository, jobRepo repository.BackfillJobRepository, pub mq.Publisher, defaultTopic string, batchSize int, pollInterval time.Duration) *OutboxRelay {
 	if batchSize <= 0 {
 		batchSize = 200
 	}
@@ -29,7 +30,8 @@ func NewOutboxRelay(repo repository.IngestEventRepository, pub mq.Publisher, def
 		pollInterval = 500 * time.Millisecond
 	}
 	return &OutboxRelay{
-		repo:         repo,
+		eventRepo:    eventRepo,
+		jobRepo:      jobRepo,
 		pub:          pub,
 		defaultTopic: strings.TrimSpace(defaultTopic),
 		batchSize:    batchSize,
@@ -38,7 +40,7 @@ func NewOutboxRelay(repo repository.IngestEventRepository, pub mq.Publisher, def
 }
 
 func (r *OutboxRelay) Run(ctx context.Context) error {
-	if r.repo == nil {
+	if r.eventRepo == nil {
 		return errors.New("ingest event repo is nil")
 	}
 	if r.pub == nil {
@@ -74,7 +76,7 @@ func (r *OutboxRelay) Run(ctx context.Context) error {
 
 func (r *OutboxRelay) RunOnce(ctx context.Context) (int, error) {
 	now := time.Now()
-	events, err := r.repo.ClaimForPublish(ctx, now, r.batchSize)
+	events, err := r.eventRepo.ClaimForPublish(ctx, now, r.batchSize)
 	if err != nil {
 		zlog.Warn("ai outbox relay claim failed", zap.Error(err))
 		return 0, err
@@ -91,7 +93,7 @@ func (r *OutboxRelay) RunOnce(ctx context.Context) (int, error) {
 			topic = strings.TrimSpace(ev.KafkaTopic)
 		}
 		if topic == "" {
-			_ = r.repo.MarkPublishFailed(ctx, ev.Id, now.Add(5*time.Minute), "kafka topic is empty")
+			_ = r.eventRepo.MarkPublishFailed(ctx, ev.Id, now.Add(5*time.Minute), "kafka topic is empty")
 			continue
 		}
 
@@ -103,8 +105,9 @@ func (r *OutboxRelay) RunOnce(ctx context.Context) (int, error) {
 		res, pubErr := r.pub.Publish(ctx, mq.Message{
 			Topic: topic,
 			Key:   key,
-			Value: []byte(ev.PayloadJson),
+			Value: []byte(strconvInt64(ev.Id)),
 			Headers: map[string]string{
+				"event_id":       strconvInt64(ev.Id),
 				"event_type":     ev.EventType,
 				"tenant_user_id": ev.TenantUserId,
 				"source_type":    ev.SourceType,
@@ -115,13 +118,18 @@ func (r *OutboxRelay) RunOnce(ctx context.Context) (int, error) {
 		})
 		if pubErr != nil {
 			next := computeNextRetry(now, ev.RetryCount)
-			_ = r.repo.MarkPublishFailed(ctx, ev.Id, next, pubErr.Error())
+			_ = r.eventRepo.MarkPublishFailed(ctx, ev.Id, next, pubErr.Error())
 			continue
 		}
 
-		if err := r.repo.MarkPublished(ctx, ev.Id, topic, int(res.Partition), res.Offset, time.Now()); err != nil {
+		if err := r.eventRepo.MarkPublished(ctx, ev.Id, topic, int(res.Partition), res.Offset, time.Now()); err != nil {
+			// 这是一个极端情况：消息发出去了，但改数据库失败了。
+			// 这会导致“消息重复发送”（At-Least-Once），下游必须做幂等。
 			zlog.Warn("ai outbox relay mark published failed", zap.Int64("id", ev.Id), zap.Error(err))
 			continue
+		}
+		if r.jobRepo != nil && ev.BackfillJobId.Valid {
+			_ = r.jobRepo.AddCounters(ctx, ev.BackfillJobId.Int64, 0, 1, 0, 0)
 		}
 		published++
 	}

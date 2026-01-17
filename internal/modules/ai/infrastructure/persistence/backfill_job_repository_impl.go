@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"OmniLink/internal/modules/ai/domain/rag"
@@ -36,7 +37,7 @@ func (r *backfillJobRepositoryImpl) GetByID(ctx context.Context, id int64) (*rag
 	if err == nil {
 		return &j, nil
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return nil, err

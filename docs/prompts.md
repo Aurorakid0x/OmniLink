@@ -34,3 +34,4 @@ todo：
 - 梳理项目
 - 把现有同步 /ai/internal/rag/backfill 改成“创建 ai_backfill_job + 写入多条 ai_ingest_event （pending）”，由 Outbox Relay 投递 Kafka
 - 实现 Kafka consumer worker：从 omnilink.ai.ingest 消费 event_id ，回查 DB 拿 payload，然后调用 reader + pipeline.Ingest，再更新 ai_ingest_event.status 和 ai_backfill_job 统计
+- 

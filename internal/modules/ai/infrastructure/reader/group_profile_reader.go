@@ -26,6 +26,118 @@ func NewGroupProfileReader(groupRepo contactRepository.GroupInfoRepository, cont
 	return &GroupProfileReader{groupRepo: groupRepo, contactRepo: contactRepo, userRepo: userRepo}
 }
 
+func (r *GroupProfileReader) ReadGroupProfile(ctx context.Context, tenantUserID, groupID string) (string, string, error) {
+	_ = ctx
+	if r == nil || r.groupRepo == nil || r.contactRepo == nil {
+		return "", "", fmt.Errorf("group/contact repo is nil")
+	}
+	uid := strings.TrimSpace(tenantUserID)
+	gid := strings.TrimSpace(groupID)
+	if uid == "" {
+		return "", "", fmt.Errorf("missing tenant_user_id")
+	}
+	if gid == "" {
+		return "", "", fmt.Errorf("missing group_id")
+	}
+
+	rel, err := r.contactRepo.GetUserContactByUserIDAndContactIDAndType(uid, gid, 1)
+	if err != nil {
+		return "", "", err
+	}
+	if rel == nil || rel.Status == 6 || rel.Status == 7 {
+		return "", "", nil
+	}
+
+	g, err := r.groupRepo.GetGroupInfoByUUID(gid)
+	if err != nil {
+		return "", "", err
+	}
+	if g == nil {
+		return "", "", nil
+	}
+
+	members, err := r.contactRepo.GetGroupMembersWithInfo(gid)
+	if err != nil {
+		members = nil
+	}
+
+	ownerName := strings.TrimSpace(g.OwnerId)
+	if r.userRepo != nil {
+		owners, err := r.userRepo.GetUserBriefByUUIDs([]string{strings.TrimSpace(g.OwnerId)})
+		if err == nil && len(owners) > 0 {
+			ob := owners[0]
+			if strings.TrimSpace(ob.Nickname) != "" {
+				ownerName = strings.TrimSpace(ob.Nickname)
+			}
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("群组档案：‘")
+	b.WriteString(strings.TrimSpace(g.Name))
+	b.WriteString("’（ID: ")
+	b.WriteString(gid)
+	b.WriteString("）。")
+
+	notice := strings.TrimSpace(g.Notice)
+	if notice != "" {
+		b.WriteString("群公告：‘")
+		b.WriteString(notice)
+		b.WriteString("’。")
+	}
+
+	if ownerName != "" {
+		b.WriteString("群主：")
+		b.WriteString(ownerName)
+		b.WriteString("。")
+	}
+
+	if g.MemberCnt > 0 {
+		b.WriteString("包含成员 ")
+		b.WriteString(fmt.Sprintf("%d", g.MemberCnt))
+		b.WriteString(" 人。")
+	}
+
+	if len(members) > 0 {
+		b.WriteString("成员包括：")
+		limit := 30
+		if len(members) < limit {
+			limit = len(members)
+		}
+		for i := 0; i < limit; i++ {
+			m := members[i]
+			name := strings.TrimSpace(m.Nickname)
+			if name == "" {
+				name = strings.TrimSpace(m.UserId)
+			}
+			if name == "" {
+				continue
+			}
+			if i > 0 {
+				b.WriteString("；")
+			}
+			b.WriteString(name)
+
+			sig := strings.TrimSpace(m.Signature)
+			if sig != "" {
+				b.WriteString("（签名：")
+				b.WriteString(sig)
+				b.WriteString("）")
+			}
+		}
+		if len(members) > limit {
+			b.WriteString("等")
+		}
+		b.WriteString("。")
+	}
+
+	content := strings.TrimSpace(b.String())
+	if content == "" {
+		return "", strings.TrimSpace(g.Name), nil
+	}
+	return content, strings.TrimSpace(g.Name), nil
+}
+
 func (r *GroupProfileReader) ListGroupProfiles(ctx context.Context, tenantUserID string) ([]GroupProfileDoc, error) {
 	_ = ctx
 	if r == nil || r.groupRepo == nil || r.contactRepo == nil {

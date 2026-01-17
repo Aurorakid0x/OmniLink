@@ -24,6 +24,73 @@ func NewContactProfileReader(contactRepo contactRepository.UserContactRepository
 	return &ContactProfileReader{contactRepo: contactRepo, userRepo: userRepo}
 }
 
+func (r *ContactProfileReader) ReadContactProfile(ctx context.Context, tenantUserID, contactID string) (string, error) {
+	_ = ctx
+	if r == nil || r.contactRepo == nil {
+		return "", fmt.Errorf("contact repo is nil")
+	}
+	uid := strings.TrimSpace(tenantUserID)
+	cid := strings.TrimSpace(contactID)
+	if uid == "" {
+		return "", fmt.Errorf("missing tenant_user_id")
+	}
+	if cid == "" {
+		return "", fmt.Errorf("missing contact_id")
+	}
+
+	rel, err := r.contactRepo.GetUserContactByUserIDAndContactIDAndType(uid, cid, 0)
+	if err != nil {
+		return "", err
+	}
+	if rel == nil || rel.Status != 0 {
+		return "", nil
+	}
+
+	nickname := ""
+	signature := ""
+	birthday := ""
+
+	if r.userRepo != nil {
+		infos, err := r.userRepo.GetUserContactInfoByUUIDs([]string{cid})
+		if err != nil {
+			return "", err
+		}
+		if len(infos) > 0 {
+			info := infos[0]
+			nickname = strings.TrimSpace(info.Nickname)
+			if nickname == "" {
+				nickname = strings.TrimSpace(info.Username)
+			}
+			signature = strings.TrimSpace(info.Signature)
+			birthday = formatBirthday(strings.TrimSpace(info.Birthday))
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("好友详情：")
+	if nickname != "" {
+		b.WriteString(nickname)
+		b.WriteString("，")
+	}
+	b.WriteString("UUID：")
+	b.WriteString(cid)
+	if signature != "" {
+		b.WriteString("。个性签名：")
+		b.WriteString(signature)
+	}
+	if birthday != "" {
+		b.WriteString("。生日：")
+		b.WriteString(birthday)
+	}
+	b.WriteString("。")
+
+	content := strings.TrimSpace(b.String())
+	if content == "" {
+		return "", nil
+	}
+	return content, nil
+}
+
 func (r *ContactProfileReader) ListContactProfiles(ctx context.Context, tenantUserID string) ([]ContactProfileDoc, error) {
 	_ = ctx
 	if r == nil || r.contactRepo == nil {

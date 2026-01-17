@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
-	"OmniLink/internal/modules/ai/infrastructure/pipeline"
+	"OmniLink/internal/modules/ai/domain/rag"
+	aiRepo "OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/internal/modules/ai/infrastructure/reader"
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
@@ -24,6 +28,8 @@ type BackfillRequest struct {
 
 type BackfillResult struct {
 	TenantUserID string `json:"tenant_user_id"`
+	JobID        int64  `json:"job_id"`
+	TotalEvents  int    `json:"total_events"`
 	Sessions     int    `json:"sessions"`
 	Pages        int    `json:"pages"`
 	Messages     int    `json:"messages"`
@@ -43,11 +49,12 @@ type ingestService struct {
 	selfReader    *reader.SelfProfileReader
 	contactReader *reader.ContactProfileReader
 	groupReader   *reader.GroupProfileReader
-	pipeline      *pipeline.IngestPipeline
+	jobRepo       aiRepo.BackfillJobRepository
+	eventRepo     aiRepo.IngestEventRepository
 }
 
-func NewIngestService(chat *reader.ChatSessionReader, self *reader.SelfProfileReader, contact *reader.ContactProfileReader, group *reader.GroupProfileReader, p *pipeline.IngestPipeline) IngestService {
-	return &ingestService{chatReader: chat, selfReader: self, contactReader: contact, groupReader: group, pipeline: p}
+func NewIngestService(chat *reader.ChatSessionReader, self *reader.SelfProfileReader, contact *reader.ContactProfileReader, group *reader.GroupProfileReader, jobRepo aiRepo.BackfillJobRepository, eventRepo aiRepo.IngestEventRepository) IngestService {
+	return &ingestService{chatReader: chat, selfReader: self, contactReader: contact, groupReader: group, jobRepo: jobRepo, eventRepo: eventRepo}
 }
 
 func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*BackfillResult, error) {
@@ -56,6 +63,10 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 	if tenant == "" {
 		return nil, xerr.New(xerr.BadRequest, "missing tenant_user_id")
 	}
+	if s == nil || s.chatReader == nil || s.eventRepo == nil || s.jobRepo == nil {
+		return nil, xerr.ErrServerError
+	}
+
 	pageSize := req.PageSize
 	if pageSize <= 0 {
 		pageSize = 200
@@ -73,50 +84,73 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 		return nil, xerr.New(xerr.BadRequest, "invalid until")
 	}
 
-	out := &BackfillResult{TenantUserID: tenant}
-
-	if s.selfReader != nil {
-		doc, err := s.selfReader.ReadProfile(ctx, tenant)
-		if err != nil {
-			zlog.Warn("ai backfill self profile read failed", zap.String("tenant_user_id", tenant), zap.Error(err))
-		} else {
-			doc = strings.TrimSpace(doc)
-			if doc != "" {
-				pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SourceType: "self_profile", SourceKey: tenant, Documents: []string{doc}})
-				if pr != nil {
-					out.Chunks += pr.Chunks
-					out.VectorsOK += pr.VectorsOK
-					out.VectorsSkip += pr.VectorsSkip
-					out.VectorsFail += pr.VectorsFail
-				}
-				if err != nil {
-					zlog.Warn("ai backfill self profile ingest failed", zap.String("tenant_user_id", tenant), zap.Error(err))
-				}
-			}
-		}
+	now := time.Now()
+	job := &rag.AIBackfillJob{
+		TenantUserId:       tenant,
+		Status:             rag.BackfillJobStatusRunning,
+		PageSize:           pageSize,
+		MaxSessions:        req.MaxSessions,
+		MaxPagesPerSession: req.MaxPagesPerSession,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
+	if since != nil {
+		job.Since = sql.NullTime{Time: *since, Valid: true}
+	}
+	if until != nil {
+		job.Until = sql.NullTime{Time: *until, Valid: true}
+	}
+	if err := s.jobRepo.Create(ctx, job); err != nil {
+		return nil, err
+	}
+
+	out := &BackfillResult{TenantUserID: tenant, JobID: job.Id}
+
+	sinceStr := ""
+	untilStr := ""
+	if since != nil {
+		sinceStr = since.Format(time.RFC3339)
+	}
+	if until != nil {
+		untilStr = until.Format(time.RFC3339)
+	}
+
+	events := make([]rag.AIIngestEvent, 0, 128)
+	add := func(eventType, sourceType, sourceKey, dedupExtra string, payload any) {
+		b, mErr := json.Marshal(payload)
+		if mErr != nil {
+			return
+		}
+		dk := fmt.Sprintf("bf_%d_%s_%s_%s_%s", job.Id, eventType, sourceType, sourceKey, strings.TrimSpace(dedupExtra))
+		ev := rag.AIIngestEvent{
+			EventType:     eventType,
+			TenantUserId:  tenant,
+			BackfillJobId: sql.NullInt64{Int64: job.Id, Valid: true},
+			SourceType:    sourceType,
+			SourceKey:     sourceKey,
+			PayloadJson:   string(b),
+			DedupKey:      dk,
+			PublishStatus: rag.IngestPublishStatusPending,
+			Status:        rag.IngestEventStatusPending,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		events = append(events, ev)
+	}
+
+	add("self_profile", "self_profile", tenant, "0", map[string]any{"tenant_user_id": tenant})
 
 	if s.contactReader != nil {
 		items, err := s.contactReader.ListContactProfiles(ctx, tenant)
 		if err != nil {
-			zlog.Warn("ai backfill contact profile list failed", zap.String("tenant_user_id", tenant), zap.Error(err))
+			zlog.Warn("ai backfill contact list failed", zap.String("tenant_user_id", tenant), zap.Error(err))
 		} else {
 			for _, it := range items {
 				cid := strings.TrimSpace(it.ContactID)
-				content := strings.TrimSpace(it.Content)
-				if cid == "" || content == "" {
+				if cid == "" {
 					continue
 				}
-				pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SourceType: "contact_profile", SourceKey: cid, Documents: []string{content}})
-				if pr != nil {
-					out.Chunks += pr.Chunks
-					out.VectorsOK += pr.VectorsOK
-					out.VectorsSkip += pr.VectorsSkip
-					out.VectorsFail += pr.VectorsFail
-				}
-				if err != nil {
-					zlog.Warn("ai backfill contact profile ingest failed", zap.String("tenant_user_id", tenant), zap.String("source_key", cid), zap.Error(err))
-				}
+				add("contact_profile", "contact_profile", cid, "0", map[string]any{"contact_id": cid})
 			}
 		}
 	}
@@ -124,24 +158,14 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 	if s.groupReader != nil {
 		items, err := s.groupReader.ListGroupProfiles(ctx, tenant)
 		if err != nil {
-			zlog.Warn("ai backfill group profile list failed", zap.String("tenant_user_id", tenant), zap.Error(err))
+			zlog.Warn("ai backfill group list failed", zap.String("tenant_user_id", tenant), zap.Error(err))
 		} else {
 			for _, it := range items {
 				gid := strings.TrimSpace(it.GroupID)
-				content := strings.TrimSpace(it.Content)
-				if gid == "" || content == "" {
+				if gid == "" {
 					continue
 				}
-				pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SourceType: "group_profile", SourceKey: gid, Documents: []string{content}})
-				if pr != nil {
-					out.Chunks += pr.Chunks
-					out.VectorsOK += pr.VectorsOK
-					out.VectorsSkip += pr.VectorsSkip
-					out.VectorsFail += pr.VectorsFail
-				}
-				if err != nil {
-					zlog.Warn("ai backfill group profile ingest failed", zap.String("tenant_user_id", tenant), zap.String("source_key", gid), zap.Error(err))
-				}
+				add("group_profile", "group_profile", gid, "0", map[string]any{"group_id": gid})
 			}
 		}
 	}
@@ -150,7 +174,6 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 	if err != nil {
 		return nil, err
 	}
-
 	maxSessions := req.MaxSessions
 	if maxSessions <= 0 || maxSessions > len(sessions) {
 		maxSessions = len(sessions)
@@ -162,6 +185,8 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 
 	for i := 0; i < maxSessions; i++ {
 		sess := sessions[i]
+		out.Sessions++
+
 		sType := "chat_group"
 		if sess.Type == reader.SessionTypePrivate {
 			sType = "chat_private"
@@ -174,7 +199,6 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 			}
 			msgs, err := s.chatReader.ReadMessages(ctx, tenant, sess, page, pageSize, since)
 			if err != nil {
-				out.VectorsFail++
 				break
 			}
 			if until != nil {
@@ -194,24 +218,29 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 			out.Pages++
 			out.Messages += len(msgs)
 
-			pr, err := s.pipeline.Ingest(ctx, pipeline.IngestRequest{TenantUserID: tenant, SessionUUID: sess.SessionUUID, SessionType: int(sess.Type), SessionName: sess.Name, SourceType: sType, SourceKey: sess.TargetID, Messages: msgs})
-			if pr != nil {
-				out.Chunks += pr.Chunks
-				out.VectorsOK += pr.VectorsOK
-				out.VectorsSkip += pr.VectorsSkip
-				out.VectorsFail += pr.VectorsFail
-			}
-			if err != nil {
-				continue
-			}
+			add("chat_messages_page", sType, sess.TargetID, fmt.Sprintf("%d", page), map[string]any{
+				"session_uuid": sess.SessionUUID,
+				"session_type": int(sess.Type),
+				"session_name": sess.Name,
+				"target_id":    sess.TargetID,
+				"page":         page,
+				"page_size":    pageSize,
+				"since":        sinceStr,
+				"until":        untilStr,
+			})
 		}
 
-		out.Sessions++
-		zlog.Info("ai backfill session done", zap.String("tenant_user_id", tenant), zap.String("session_uuid", sess.SessionUUID), zap.String("source_type", sType), zap.String("source_key", sess.TargetID), zap.Int("pages", pages))
+		zlog.Info("ai backfill session scheduled", zap.String("tenant_user_id", tenant), zap.String("session_uuid", sess.SessionUUID), zap.String("source_type", sType), zap.String("source_key", sess.TargetID), zap.Int("pages", pages))
 	}
 
+	if err := s.eventRepo.CreateBatch(ctx, events); err != nil {
+		return nil, err
+	}
+	_ = s.jobRepo.AddCounters(ctx, job.Id, len(events), 0, 0, 0)
+
+	out.TotalEvents = len(events)
 	out.DurationMs = time.Since(start).Milliseconds()
-	zlog.Info("ai backfill done", zap.String("tenant_user_id", tenant), zap.Int("sessions", out.Sessions), zap.Int("pages", out.Pages), zap.Int("messages", out.Messages), zap.Int("chunks", out.Chunks), zap.Int("ok", out.VectorsOK), zap.Int("skip", out.VectorsSkip), zap.Int("fail", out.VectorsFail), zap.Int64("ms", out.DurationMs))
+	zlog.Info("ai backfill scheduled", zap.String("tenant_user_id", tenant), zap.Int64("job_id", job.Id), zap.Int("events", out.TotalEvents), zap.Int("sessions", out.Sessions), zap.Int("pages", out.Pages), zap.Int("messages", out.Messages), zap.Int64("ms", out.DurationMs))
 	return out, nil
 }
 

@@ -80,18 +80,17 @@ func init() {
 				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
 
 				eventRepo := aiPersistence.NewIngestEventRepository(initial.GormDB)
+				jobRepo := aiPersistence.NewBackfillJobRepository(initial.GormDB)
 				pub, err := aiKafka.NewPublisher(conf.KafkaConfig.Brokers)
 				if err != nil {
 					zlog.Warn("ai kafka publisher init failed: " + err.Error())
 				} else {
-					// 1. 启动前显式创建/检查 Topic，确保分区数符合预期
 					_ = aiKafka.EnsureTopic(aiKafka.TopicAdminConfig{
 						Brokers:  conf.KafkaConfig.Brokers,
 						ClientID: conf.KafkaConfig.ClientID,
 					}, strings.TrimSpace(conf.KafkaConfig.IngestTopic), conf.KafkaConfig.Partitions, conf.KafkaConfig.Replication)
 
-					// 2. 初始化并启动 Outbox Relay
-					relay := aiQueue.NewOutboxRelay(eventRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
+					relay := aiQueue.NewOutboxRelay(eventRepo, jobRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
 					go func() {
 						if err := relay.Run(context.Background()); err != nil {
 							zlog.Warn("ai outbox relay stopped: " + err.Error())
@@ -110,8 +109,25 @@ func init() {
 				if err != nil {
 					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
 				} else {
-					ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, p)
+					ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, jobRepo, eventRepo)
 					aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
+
+					consumer, err := aiKafka.NewConsumer(aiKafka.ConsumerConfig{
+						Brokers:  conf.KafkaConfig.Brokers,
+						GroupID:  strings.TrimSpace(conf.KafkaConfig.ConsumerGroupID),
+						Topics:   []string{strings.TrimSpace(conf.KafkaConfig.IngestTopic)},
+						ClientID: conf.KafkaConfig.ClientID,
+					})
+					if err != nil {
+						zlog.Warn("ai kafka consumer init failed: " + err.Error())
+					} else {
+						worker := aiQueue.NewIngestConsumerWorker(consumer, eventRepo, jobRepo, chatReader, selfReader, contactReader, groupReader, p)
+						go func() {
+							if err := worker.Run(context.Background()); err != nil {
+								zlog.Warn("ai ingest consumer stopped: " + err.Error())
+							}
+						}()
+					}
 				}
 			}
 		}
