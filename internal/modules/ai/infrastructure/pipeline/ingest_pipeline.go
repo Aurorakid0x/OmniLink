@@ -55,6 +55,10 @@ type IngestPipeline struct {
 	vs         repository.VectorStore
 	einoIndexer indexer.Indexer
 	embedder   embedding.Embedder
+
+	embeddingProvider string
+	embeddingModel    string
+
 	merger     *transform.ChatTurnMerger
 	chunker    *chunking.SimpleChunker
 	collection string
@@ -62,12 +66,12 @@ type IngestPipeline struct {
 	r          compose.Runnable[*IngestRequest, *IngestResult]
 }
 
-func NewIngestPipeline(repo repository.RAGRepository, vs repository.VectorStore, embedder embedding.Embedder, merger *transform.ChatTurnMerger, chunker *chunking.SimpleChunker, collection string, vectorDim int) (*IngestPipeline, error) {
+func NewIngestPipeline(repo repository.RAGRepository, vs repository.VectorStore, embedder embedding.Embedder, embeddingProvider, embeddingModel string, merger *transform.ChatTurnMerger, chunker *chunking.SimpleChunker, collection string, vectorDim int) (*IngestPipeline, error) {
 	einoIndexer, err := vectordb.NewEinoVectorStore(vs)
 	if err != nil {
 		return nil, err
 	}
-	p := &IngestPipeline{repo: repo, vs: vs, einoIndexer: einoIndexer, embedder: embedder, merger: merger, chunker: chunker, collection: collection, vectorDim: vectorDim}
+	p := &IngestPipeline{repo: repo, vs: vs, einoIndexer: einoIndexer, embedder: embedder, embeddingProvider: strings.TrimSpace(embeddingProvider), embeddingModel: strings.TrimSpace(embeddingModel), merger: merger, chunker: chunker, collection: collection, vectorDim: vectorDim}
 	r, err := p.buildGraph(context.Background())
 	if err != nil {
 		return nil, err

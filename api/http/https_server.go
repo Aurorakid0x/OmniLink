@@ -105,8 +105,15 @@ func init() {
 				groupReader := aiReader.NewGroupProfileReader(groupRepo, contactRepo, userRepo)
 				chunker := aiChunking.NewRecursiveChunker(800, 120)
 				merger := aiTransform.NewChatTurnMerger()
-				embedder := aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
-				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
+
+				embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
+				if err != nil {
+					zlog.Warn("ai embedder init failed: " + err.Error() + "; fallback to mock")
+					embedder = aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
+					embMeta = aiEmbedding.EmbedderMeta{Provider: "mock", Model: "mock", Dim: conf.MilvusConfig.VectorDim}
+				}
+
+				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, embMeta.Provider, embMeta.Model, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
 				if err != nil {
 					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
 				} else {

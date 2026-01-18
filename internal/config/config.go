@@ -50,12 +50,48 @@ type KafkaConfig struct {
 	Replication     int16    `toml:"replication"`
 }
 
+type AIEmbeddingConfig struct {
+	Provider        string `toml:"provider"`
+	APIKey          string `toml:"apiKey"`
+	AccessKey       string `toml:"accessKey"`
+	SecretKey       string `toml:"secretKey"`
+	BaseURL         string `toml:"baseURL"`
+	Region          string `toml:"region"`
+	Model           string `toml:"model"`
+	Dimensions      int    `toml:"dimensions"`
+	TimeoutSeconds  int    `toml:"timeoutSeconds"`
+	RetryTimes      int    `toml:"retryTimes"`
+	User            string `toml:"user"`
+	ByAzure         bool   `toml:"byAzure"`
+	AzureAPIVersion string `toml:"azureApiVersion"`
+}
+
+type AIChatModelConfig struct {
+	Provider        string `toml:"provider"`
+	APIKey          string `toml:"apiKey"`
+	AccessKey       string `toml:"accessKey"`
+	SecretKey       string `toml:"secretKey"`
+	BaseURL         string `toml:"baseURL"`
+	Region          string `toml:"region"`
+	Model           string `toml:"model"`
+	TimeoutSeconds  int    `toml:"timeoutSeconds"`
+	RetryTimes      int    `toml:"retryTimes"`
+	ByAzure         bool   `toml:"byAzure"`
+	AzureAPIVersion string `toml:"azureApiVersion"`
+}
+
+type AIConfig struct {
+	Embedding AIEmbeddingConfig `toml:"embedding"`
+	ChatModel AIChatModelConfig `toml:"chatModel"`
+}
+
 type Config struct {
 	MainConfig   `toml:"mainConfig"`
 	MysqlConfig  `toml:"mysqlConfig"`
 	JwtConfig    `toml:"jwtConfig"`
 	MilvusConfig `toml:"milvusConfig"`
 	KafkaConfig  `toml:"kafkaConfig"`
+	AIConfig     `toml:"aiConfig"`
 	LogConfig    `toml:"logConfig"`
 }
 

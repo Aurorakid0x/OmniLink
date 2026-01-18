@@ -256,17 +256,17 @@ func (p *IngestPipeline) chunkNode(ctx context.Context, st *ingestState, _ ...an
 			}
 			if vr == nil {
 				err = p.repo.CreateVectorRecord(ctx, &rag.AIVectorRecord{
-					ChunkId:           existingChunk.Id,
-					VectorStore:       "milvus",
-					Collection:        p.collection,
-					VectorId:          vectorID,
-					EmbeddingProvider: "mock",
-					EmbeddingModel:    "mock",
-					Dim:               p.vectorDim,
-					EmbedStatus:       rag.VectorEmbedStatusPending,
-					CreatedAt:         now,
-					UpdatedAt:         now,
-				})
+						ChunkId:           existingChunk.Id,
+						VectorStore:       "milvus",
+						Collection:        p.collection,
+						VectorId:          vectorID,
+						EmbeddingProvider: p.embeddingProvider,
+						EmbeddingModel:    p.embeddingModel,
+						Dim:               p.vectorDim,
+						EmbedStatus:       rag.VectorEmbedStatusPending,
+						CreatedAt:         now,
+						UpdatedAt:         now,
+					})
 				if err != nil {
 					st.Err = err
 					return st, nil
@@ -306,8 +306,8 @@ func (p *IngestPipeline) chunkNode(ctx context.Context, st *ingestState, _ ...an
 			VectorStore:       "milvus",
 			Collection:        p.collection,
 			VectorId:          defaultVID,
-			EmbeddingProvider: "mock",
-			EmbeddingModel:    "mock",
+			EmbeddingProvider: p.embeddingProvider,
+			EmbeddingModel:    p.embeddingModel,
 			Dim:               p.vectorDim,
 			EmbedStatus:       rag.VectorEmbedStatusPending,
 			CreatedAt:         now,

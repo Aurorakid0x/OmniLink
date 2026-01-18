@@ -26,3 +26,23 @@ dbName = "omnilink"
 collectionName = "ai_kb_vectors"
 vectorDim = 768
 metricType = "COSINE"
+
+[aiConfig]
+  [aiConfig.embedding]
+  provider = "mock"
+  apiKey = ""
+  baseURL = "https://ark.cn-beijing.volces.com/api/v3"
+  region = "cn-beijing"
+  model = ""        # 填入火山引擎接入点 ID (ep-xxx)
+  dimensions = 768
+  timeoutSeconds = 30
+  retryTimes = 2
+
+  [aiConfig.chatModel]
+  provider = "mock"
+  apiKey = ""
+  baseURL = "https://ark.cn-beijing.volces.com/api/v3"
+  region = "cn-beijing"
+  model = ""        # 填入火山引擎接入点 ID (ep-xxx)
+  timeoutSeconds = 120
+  retryTimes = 2
