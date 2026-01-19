@@ -48,6 +48,8 @@ github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive
 github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive v0.0.0-20251011073417-75b93b87b8a9/go.mod h1:3R7eHOKq+O5aOWXNUAm950kgSnHH5ulfNGoM0SrrQy8=
 github.com/cloudwego/eino-ext/components/embedding/ark v0.1.1 h1:PM/+XAvJtrBqFlBY15ws0pb0+92XKHQv0ei3M7PIJcQ=
 github.com/cloudwego/eino-ext/components/embedding/ark v0.1.1/go.mod h1:6O6x0fHfM3uCLr3lX1DnB/my7fC3WRUA5hpkCkrkZrg=
+github.com/cloudwego/eino-ext/components/embedding/dashscope v0.0.0-20260119032004-acb76fa4e2d5 h1:IoZVARgi6dYjV+VcOgjY0TihWfYr9hdid7Ww391QuUY=
+github.com/cloudwego/eino-ext/components/embedding/dashscope v0.0.0-20260119032004-acb76fa4e2d5/go.mod h1:ekJmA+GLD9vJyZNeODZDBFMiJ92Suy6nF0OY42X3sao=
 github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260116084156-bb0daea635b9 h1:11pX8XPVl7tUoxr+nXUAU67Dw909Rou3mQKCK1icHGE=
 github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260116084156-bb0daea635b9/go.mod h1:SajSFFRIXJXIbxadAAlSUIS5KTY8R/jzJg9RNSOXCCI=
 github.com/cloudwego/eino-ext/components/model/ark v0.1.63 h1:rVjngP5tu7f35SFG8jHJztYEx2Iq8zBLbIeYs84C6k0=

@@ -46,9 +46,7 @@ func init() {
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
 	GE.Use(cors.New(corsConfig))
 	// GE.Use(ssl.TlsHandler(config.GetConfig().MainConfig.Host, config.GetConfig().MainConfig.Port))
-
 	wsHub := ws.NewHub()
-
 	userRepo := persistence.NewUserInfoRepository(initial.GormDB)
 	contactRepo := contactPersistence.NewUserContactRepository(initial.GormDB)
 	applyRepo := contactPersistence.NewContactApplyRepository(initial.GormDB)
@@ -56,9 +54,9 @@ func init() {
 	uow := contactPersistence.NewContactUnitOfWork(initial.GormDB)
 	sessionRepo := chatPersistence.NewSessionRepository(initial.GormDB)
 	messageRepo := chatPersistence.NewMessageRepository(initial.GormDB)
-
 	conf := config.GetConfig()
 	var aiAdminH *aiHTTP.AdminHandler
+	var aiQueryH *aiHTTP.QueryHandler
 	var aiAsyncIngest aiService.AsyncIngestService
 	if initial.MilvusClient != nil {
 		metric := entity.COSINE
@@ -79,7 +77,6 @@ func init() {
 				zlog.Warn("ai milvus vector store init failed: " + err.Error())
 			} else {
 				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
-
 				eventRepo := aiPersistence.NewIngestEventRepository(initial.GormDB)
 				jobRepo := aiPersistence.NewBackfillJobRepository(initial.GormDB)
 				pub, err := aiKafka.NewPublisher(conf.KafkaConfig.Brokers)
@@ -90,7 +87,6 @@ func init() {
 						Brokers:  conf.KafkaConfig.Brokers,
 						ClientID: conf.KafkaConfig.ClientID,
 					}, strings.TrimSpace(conf.KafkaConfig.IngestTopic), conf.KafkaConfig.Partitions, conf.KafkaConfig.Replication)
-
 					relay := aiQueue.NewOutboxRelay(eventRepo, jobRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
 					go func() {
 						if err := relay.Run(context.Background()); err != nil {
@@ -98,21 +94,18 @@ func init() {
 						}
 					}()
 				}
-
 				chatReader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
 				selfReader := aiReader.NewSelfProfileReader(userRepo)
 				contactReader := aiReader.NewContactProfileReader(contactRepo, userRepo)
 				groupReader := aiReader.NewGroupProfileReader(groupRepo, contactRepo, userRepo)
 				chunker := aiChunking.NewRecursiveChunker(800, 120)
 				merger := aiTransform.NewChatTurnMerger()
-
 				embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 				if err != nil {
 					zlog.Warn("ai embedder init failed: " + err.Error() + "; fallback to mock")
 					embedder = aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
 					embMeta = aiEmbedding.EmbedderMeta{Provider: "mock", Model: "mock", Dim: conf.MilvusConfig.VectorDim}
 				}
-
 				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, embMeta.Provider, embMeta.Model, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
 				if err != nil {
 					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
@@ -120,7 +113,14 @@ func init() {
 					ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, jobRepo, eventRepo)
 					aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
 					aiAsyncIngest = aiService.NewAsyncIngestService(eventRepo)
-
+					// RAG 召回 Pipeline & Service & Handler
+					retrievePipeline, err := aiPipeline.NewRetrievePipeline(ragRepo, vs, embedder, conf.MilvusConfig.VectorDim)
+					if err != nil {
+						zlog.Warn("ai retrieve pipeline init failed: " + err.Error())
+					} else {
+						retrieveSvc := aiService.NewRetrieveService(retrievePipeline)
+						aiQueryH = aiHTTP.NewQueryHandler(retrieveSvc)
+					}
 					consumer, err := aiKafka.NewConsumer(aiKafka.ConsumerConfig{
 						Brokers:  conf.KafkaConfig.Brokers,
 						GroupID:  strings.TrimSpace(conf.KafkaConfig.ConsumerGroupID),
@@ -143,25 +143,21 @@ func init() {
 	} else {
 		zlog.Warn("ai milvus client is nil; ai routes disabled")
 	}
-
 	userSvc := service.NewUserInfoService(userRepo)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow, aiAsyncIngest)
 	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow, aiAsyncIngest)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
 	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, aiAsyncIngest)
-
 	userH := userHandler.NewUserInfoHandler(userSvc)
 	contactH := contactHandler.NewContactHandler(contactSvc, wsHub)
 	groupH := contactHandler.NewGroupHandler(groupSvc)
 	sessionH := chatHandler.NewSessionHandler(sessionSvc)
 	messageH := chatHandler.NewMessageHandler(messageSvc)
 	wsH := chatHandler.NewWsHandler(wsHub, realtimeSvc, userRepo)
-
 	GE.POST("/login", userH.Login)
 	GE.POST("/register", userH.Register)
 	GE.GET("/wss", wsH.Connect)
-
 	authed := GE.Group("/")
 	authed.Use(jwtMiddleware.Auth())
 	authed.GET("/auth/ping", func(c *gin.Context) {
@@ -172,6 +168,9 @@ func init() {
 	})
 	if aiAdminH != nil {
 		authed.POST("/ai/internal/rag/backfill", aiAdminH.Backfill)
+	}
+	if aiQueryH != nil {
+		authed.POST("/ai/rag/query", aiQueryH.Query)
 	}
 	authed.POST("/contact/getUserList", contactH.GetUserList)
 	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)

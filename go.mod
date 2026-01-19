@@ -39,6 +39,7 @@ require (
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/components/embedding/ark v0.1.1
+	github.com/cloudwego/eino-ext/components/embedding/dashscope v0.0.0-20260119032004-acb76fa4e2d5
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260116084156-bb0daea635b9
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.63
 	github.com/cockroachdb/errors v1.9.1 // indirect

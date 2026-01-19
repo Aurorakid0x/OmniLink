@@ -10,6 +10,7 @@ import (
 	"OmniLink/internal/config"
 
 	arkEmbed "github.com/cloudwego/eino-ext/components/embedding/ark"
+	dashscopeEmbed "github.com/cloudwego/eino-ext/components/embedding/dashscope"
 	openaIEmbed "github.com/cloudwego/eino-ext/components/embedding/openai"
 	"github.com/cloudwego/eino/components/embedding"
 )
@@ -74,52 +75,24 @@ func NewEmbedderFromConfig(ctx context.Context, conf *config.Config) (embedding.
 		return em, EmbedderMeta{Provider: "openai", Model: model, Dim: dim}, nil
 	case "ark":
 		apiKey := strings.TrimSpace(conf.AIConfig.Embedding.APIKey)
-		accessKey := strings.TrimSpace(conf.AIConfig.Embedding.AccessKey)
-		secretKey := strings.TrimSpace(conf.AIConfig.Embedding.SecretKey)
 		if apiKey == "" {
 			apiKey = strings.TrimSpace(os.Getenv("ARK_API_KEY"))
-		}
-		if accessKey == "" {
-			accessKey = strings.TrimSpace(os.Getenv("ARK_ACCESS_KEY"))
-		}
-		if secretKey == "" {
-			secretKey = strings.TrimSpace(os.Getenv("ARK_SECRET_KEY"))
 		}
 		if model == "" {
 			model = strings.TrimSpace(os.Getenv("ARK_EMBED_MODEL"))
 		}
 		baseURL := strings.TrimSpace(conf.AIConfig.Embedding.BaseURL)
-		region := strings.TrimSpace(conf.AIConfig.Embedding.Region)
 		if baseURL == "" {
 			baseURL = strings.TrimSpace(os.Getenv("ARK_BASE_URL"))
 		}
-		if region == "" {
-			region = strings.TrimSpace(os.Getenv("ARK_REGION"))
-		}
-		if apiKey == "" && (accessKey == "" || secretKey == "") {
-			return nil, EmbedderMeta{}, fmt.Errorf("ark embedding missing apiKey or accessKey/secretKey")
-		}
-		if model == "" {
-			return nil, EmbedderMeta{}, fmt.Errorf("ark embedding missing model")
+		if apiKey == "" || model == "" {
+			return nil, EmbedderMeta{}, fmt.Errorf("ark embedding missing apiKey/model")
 		}
 
-		timeout := 30 * time.Second
-		if conf.AIConfig.Embedding.TimeoutSeconds > 0 {
-			timeout = time.Duration(conf.AIConfig.Embedding.TimeoutSeconds) * time.Second
-		}
-		retryTimes := 2
-		if conf.AIConfig.Embedding.RetryTimes > 0 {
-			retryTimes = conf.AIConfig.Embedding.RetryTimes
-		}
 		cfg := &arkEmbed.EmbeddingConfig{
-			APIKey:     apiKey,
-			AccessKey:  accessKey,
-			SecretKey:  secretKey,
-			Model:      model,
-			BaseURL:    baseURL,
-			Region:     region,
-			Timeout:    &timeout,
-			RetryTimes: &retryTimes,
+			APIKey:  apiKey,
+			Model:   model,
+			BaseURL: baseURL,
 		}
 
 		em, err := arkEmbed.NewEmbedder(ctx, cfg)
@@ -127,6 +100,28 @@ func NewEmbedderFromConfig(ctx context.Context, conf *config.Config) (embedding.
 			return nil, EmbedderMeta{}, err
 		}
 		return em, EmbedderMeta{Provider: "ark", Model: model, Dim: dim}, nil
+	case "dashscope":
+		apiKey := strings.TrimSpace(conf.AIConfig.Embedding.APIKey)
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
+		}
+		if model == "" {
+			model = strings.TrimSpace(os.Getenv("DASHSCOPE_EMBED_MODEL"))
+		}
+		if apiKey == "" || model == "" {
+			return nil, EmbedderMeta{}, fmt.Errorf("dashscope embedding missing apiKey/model")
+		}
+
+		localDim := dim
+		de, err := dashscopeEmbed.NewEmbedder(ctx, &dashscopeEmbed.EmbeddingConfig{
+			Model:      model,
+			APIKey:     apiKey,
+			Dimensions: &localDim,
+		})
+		if err != nil {
+			return nil, EmbedderMeta{}, err
+		}
+		return de, EmbedderMeta{Provider: "dashscope", Model: model, Dim: dim}, nil
 	default:
 		return nil, EmbedderMeta{}, fmt.Errorf("unknown embedding provider: %s", provider)
 	}

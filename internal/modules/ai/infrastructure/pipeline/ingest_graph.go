@@ -256,17 +256,17 @@ func (p *IngestPipeline) chunkNode(ctx context.Context, st *ingestState, _ ...an
 			}
 			if vr == nil {
 				err = p.repo.CreateVectorRecord(ctx, &rag.AIVectorRecord{
-						ChunkId:           existingChunk.Id,
-						VectorStore:       "milvus",
-						Collection:        p.collection,
-						VectorId:          vectorID,
-						EmbeddingProvider: p.embeddingProvider,
-						EmbeddingModel:    p.embeddingModel,
-						Dim:               p.vectorDim,
-						EmbedStatus:       rag.VectorEmbedStatusPending,
-						CreatedAt:         now,
-						UpdatedAt:         now,
-					})
+					ChunkId:           existingChunk.Id,
+					VectorStore:       "milvus",
+					Collection:        p.collection,
+					VectorId:          vectorID,
+					EmbeddingProvider: p.embeddingProvider,
+					EmbeddingModel:    p.embeddingModel,
+					Dim:               p.vectorDim,
+					EmbedStatus:       rag.VectorEmbedStatusPending,
+					CreatedAt:         now,
+					UpdatedAt:         now,
+				})
 				if err != nil {
 					st.Err = err
 					return st, nil
@@ -350,35 +350,57 @@ func (p *IngestPipeline) embedNode(ctx context.Context, st *ingestState, _ ...an
 		return st, nil
 	}
 
-	texts := make([]string, 0, len(st.Docs))
-	for _, d := range st.Docs {
-		if d != nil {
-			texts = append(texts, d.Content)
-		}
-	}
-
-	vecs, err := p.embedder.EmbedStrings(ctx, texts)
-	if err != nil {
-		st.Err = err
-		return st, nil
-	}
-
+	// DashScope 等部分 embedding 提供方要求 batch size 不能过大（例如 <=10），
+	// 这里按固定批大小分批调用 EmbedStrings，并保持与原先相同的错误处理语义。
+	const maxBatchSize = 10
 	next := make([]*schema.Document, 0, len(st.Docs))
-	for i, d := range st.Docs {
-		if d == nil {
+
+	for start := 0; start < len(st.Docs); {
+		end := start + maxBatchSize
+		if end > len(st.Docs) {
+			end = len(st.Docs)
+		}
+
+		batchDocs := st.Docs[start:end]
+		texts := make([]string, 0, len(batchDocs))
+		for _, d := range batchDocs {
+			if d != nil {
+				texts = append(texts, d.Content)
+			}
+		}
+		if len(texts) == 0 {
+			start = end
 			continue
 		}
-		if i >= len(vecs) {
-			st.VectorIDErrors[d.ID] = "embedding result missing"
-			continue
+
+		vecs, err := p.embedder.EmbedStrings(ctx, texts)
+		if err != nil {
+			st.Err = err
+			return st, nil
 		}
-		if len(vecs[i]) != p.vectorDim {
-			st.VectorIDErrors[d.ID] = fmt.Sprintf("vector dim mismatch got=%d want=%d", len(vecs[i]), p.vectorDim)
-			continue
+
+		idx := 0
+		for _, d := range batchDocs {
+			if d == nil {
+				continue
+			}
+			if idx >= len(vecs) {
+				st.VectorIDErrors[d.ID] = "embedding result missing"
+				continue
+			}
+			if len(vecs[idx]) != p.vectorDim {
+				st.VectorIDErrors[d.ID] = fmt.Sprintf("vector dim mismatch got=%d want=%d", len(vecs[idx]), p.vectorDim)
+				idx++
+				continue
+			}
+			d.WithDenseVector(vecs[idx])
+			next = append(next, d)
+			idx++
 		}
-		d.WithDenseVector(vecs[i])
-		next = append(next, d)
+
+		start = end
 	}
+
 	st.Docs = next
 	return st, nil
 }

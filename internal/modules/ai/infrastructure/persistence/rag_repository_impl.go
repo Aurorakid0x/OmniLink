@@ -145,7 +145,7 @@ func (r *ragRepositoryImpl) UpdateVectorStatus(ctx context.Context, vectorID str
 		"updated_at":   time.Now(),
 	}
 	if errorMsg != "" {
-		updates["error_msg"] = errorMsg
+		updates["error_msg"] = truncateErrorMsg(errorMsg)
 	}
 
 	if status == 1 {
@@ -266,4 +266,12 @@ func (r *ragRepositoryImpl) GetSourcesByIDs(ctx context.Context, sourceIDs []int
 		result[sources[i].Id] = &sources[i]
 	}
 	return result, nil
+}
+
+func truncateErrorMsg(s string) string {
+	r := []rune(s)
+	if len(r) <= 255 {
+		return s
+	}
+	return string(r[:255])
 }
