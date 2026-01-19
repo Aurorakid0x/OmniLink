@@ -227,3 +227,43 @@ func (r *ragRepositoryImpl) UpdateKnowledgeSourceStatus(ctx context.Context, sou
 		Where("id = ?", sourceID).
 		Updates(map[string]any{"status": status, "updated_at": time.Now()}).Error
 }
+
+func (r *ragRepositoryImpl) GetChunksByIDs(ctx context.Context, chunkIDs []int64) (map[int64]*rag.AIKnowledgeChunk, error) {
+	if len(chunkIDs) == 0 {
+		return map[int64]*rag.AIKnowledgeChunk{}, nil
+	}
+
+	var chunks []rag.AIKnowledgeChunk
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND status = ?", chunkIDs, rag.CommonStatusEnabled).
+		Find(&chunks).Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[int64]*rag.AIKnowledgeChunk, len(chunks))
+	for i := range chunks {
+		result[chunks[i].Id] = &chunks[i]
+	}
+	return result, nil
+}
+
+func (r *ragRepositoryImpl) GetSourcesByIDs(ctx context.Context, sourceIDs []int64) (map[int64]*rag.AIKnowledgeSource, error) {
+	if len(sourceIDs) == 0 {
+		return map[int64]*rag.AIKnowledgeSource{}, nil
+	}
+
+	var sources []rag.AIKnowledgeSource
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND status = ?", sourceIDs, rag.CommonStatusEnabled).
+		Find(&sources).Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[int64]*rag.AIKnowledgeSource, len(sources))
+	for i := range sources {
+		result[sources[i].Id] = &sources[i]
+	}
+	return result, nil
+}

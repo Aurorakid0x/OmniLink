@@ -22,4 +22,7 @@ type RAGRepository interface {
 	CreateChunkAndVectorRecord(ctx context.Context, chunk *rag.AIKnowledgeChunk, record *rag.AIVectorRecord) error
 	CreateVectorRecord(ctx context.Context, record *rag.AIVectorRecord) error
 	UpdateVectorStatus(ctx context.Context, vectorID string, status int8, errorMsg string) error
+
+	GetChunksByIDs(ctx context.Context, chunkIDs []int64) (map[int64]*rag.AIKnowledgeChunk, error)
+	GetSourcesByIDs(ctx context.Context, sourceIDs []int64) (map[int64]*rag.AIKnowledgeSource, error)
 }

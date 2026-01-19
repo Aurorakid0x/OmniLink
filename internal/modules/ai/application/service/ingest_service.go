@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	aiRequest "OmniLink/internal/modules/ai/application/dto/request"
+	aiRespond "OmniLink/internal/modules/ai/application/dto/respond"
 	"OmniLink/internal/modules/ai/domain/rag"
 	aiRepo "OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/internal/modules/ai/infrastructure/reader"
@@ -17,31 +19,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type BackfillRequest struct {
-	TenantUserID      string
-	PageSize          int
-	MaxSessions       int
-	MaxPagesPerSession int
-	Since             string
-	Until             string
-}
-
-type BackfillResult struct {
-	TenantUserID string `json:"tenant_user_id"`
-	JobID        int64  `json:"job_id"`
-	TotalEvents  int    `json:"total_events"`
-	Sessions     int    `json:"sessions"`
-	Pages        int    `json:"pages"`
-	Messages     int    `json:"messages"`
-	Chunks       int    `json:"chunks"`
-	VectorsOK    int    `json:"vectors_ok"`
-	VectorsSkip  int    `json:"vectors_skip"`
-	VectorsFail  int    `json:"vectors_fail"`
-	DurationMs   int64  `json:"duration_ms"`
-}
-
 type IngestService interface {
-	Backfill(ctx context.Context, req BackfillRequest) (*BackfillResult, error)
+	Backfill(ctx context.Context, req aiRequest.BackfillRequest) (*aiRespond.BackfillResult, error)
 }
 
 type ingestService struct {
@@ -57,7 +36,7 @@ func NewIngestService(chat *reader.ChatSessionReader, self *reader.SelfProfileRe
 	return &ingestService{chatReader: chat, selfReader: self, contactReader: contact, groupReader: group, jobRepo: jobRepo, eventRepo: eventRepo}
 }
 
-func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*BackfillResult, error) {
+func (s *ingestService) Backfill(ctx context.Context, req aiRequest.BackfillRequest) (*aiRespond.BackfillResult, error) {
 	start := time.Now()
 	tenant := strings.TrimSpace(req.TenantUserID)
 	if tenant == "" {
@@ -104,7 +83,7 @@ func (s *ingestService) Backfill(ctx context.Context, req BackfillRequest) (*Bac
 		return nil, err
 	}
 
-	out := &BackfillResult{TenantUserID: tenant, JobID: job.Id}
+	out := &aiRespond.BackfillResult{TenantUserID: tenant, JobID: job.Id}
 
 	sinceStr := ""
 	untilStr := ""

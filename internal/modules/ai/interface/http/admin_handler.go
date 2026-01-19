@@ -1,6 +1,7 @@
 package http
 
 import (
+	aiRequest "OmniLink/internal/modules/ai/application/dto/request"
 	"OmniLink/internal/modules/ai/application/service"
 	"OmniLink/pkg/back"
 	"OmniLink/pkg/xerr"
@@ -50,13 +51,13 @@ func (h *AdminHandler) Backfill(c *gin.Context) {
 		userID = uuid
 	}
 
-	data, err := h.ingestSvc.Backfill(c.Request.Context(), service.BackfillRequest{
-		TenantUserID:      userID,
-		PageSize:          req.PageSize,
-		MaxSessions:       req.MaxSessions,
+	data, err := h.ingestSvc.Backfill(c.Request.Context(), aiRequest.BackfillRequest{
+		TenantUserID:       userID,
+		PageSize:           req.PageSize,
+		MaxSessions:        req.MaxSessions,
 		MaxPagesPerSession: req.MaxPagesPerSession,
-		Since:             req.Since,
-		Until:             req.Until,
+		Since:              req.Since,
+		Until:              req.Until,
 	})
 	back.Result(c, data, err)
 }

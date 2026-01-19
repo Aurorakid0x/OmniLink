@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	aiRequest "OmniLink/internal/modules/ai/application/dto/request"
 	aiIngest "OmniLink/internal/modules/ai/application/service"
 	chatRequest "OmniLink/internal/modules/chat/application/dto/request"
 	chatRespond "OmniLink/internal/modules/chat/application/dto/respond"
@@ -150,7 +151,7 @@ func (s *realtimeServiceImpl) SendPrivateMessage(senderID string, req chatReques
 
 	if s.aiIngest != nil && msg.Type == 0 && strings.TrimSpace(msg.Content) != "" {
 		since := msg.CreatedAt.Add(-5 * time.Second)
-		_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiIngest.ChatMessagesPageRequest{
+		_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiRequest.ChatMessagesPageRequest{
 			TenantUserID: senderID,
 			SessionUUID:  sessSender.Uuid,
 			SessionType:  1,
@@ -163,7 +164,7 @@ func (s *realtimeServiceImpl) SendPrivateMessage(senderID string, req chatReques
 			SourceKey:    req.ReceiveId,
 			DedupExtra:   msg.Uuid,
 		})
-		_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiIngest.ChatMessagesPageRequest{
+		_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiRequest.ChatMessagesPageRequest{
 			TenantUserID: req.ReceiveId,
 			SessionUUID:  sessReceiver.Uuid,
 			SessionType:  1,
@@ -330,7 +331,7 @@ func (s *realtimeServiceImpl) SendGroupMessage(senderID string, req chatRequest.
 			if sessUUID == "" {
 				continue
 			}
-			_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiIngest.ChatMessagesPageRequest{
+			_ = s.aiIngest.EnqueueChatMessagesPage(context.Background(), aiRequest.ChatMessagesPageRequest{
 				TenantUserID: uid,
 				SessionUUID:  sessUUID,
 				SessionType:  2,

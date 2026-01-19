@@ -10,37 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"OmniLink/internal/modules/ai/application/dto/request"
 	"OmniLink/internal/modules/ai/domain/rag"
 	aiRepo "OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/pkg/xerr"
 )
 
-type ChatMessagesPageRequest struct {
-	TenantUserID string
-
-	SessionUUID string
-	SessionType int
-	SessionName string
-
-	TargetID string
-
-	Page     int
-	PageSize int
-
-	Since *time.Time
-	Until *time.Time
-
-	SourceType string
-	SourceKey  string
-
-	DedupExtra string
-}
-
 type AsyncIngestService interface {
 	EnqueueSelfProfile(ctx context.Context, tenantUserID string) error
 	EnqueueContactProfile(ctx context.Context, tenantUserID, contactID string) error
 	EnqueueGroupProfile(ctx context.Context, tenantUserID, groupID string) error
-	EnqueueChatMessagesPage(ctx context.Context, req ChatMessagesPageRequest) error
+	EnqueueChatMessagesPage(ctx context.Context, req request.ChatMessagesPageRequest) error
 }
 
 type asyncIngestService struct {
@@ -80,7 +60,7 @@ func (s *asyncIngestService) EnqueueGroupProfile(ctx context.Context, tenantUser
 	return s.enqueue(ctx, "group_profile", tenant, "group_profile", gid, payload, dedupByMinute())
 }
 
-func (s *asyncIngestService) EnqueueChatMessagesPage(ctx context.Context, req ChatMessagesPageRequest) error {
+func (s *asyncIngestService) EnqueueChatMessagesPage(ctx context.Context, req request.ChatMessagesPageRequest) error {
 	if s == nil || s.eventRepo == nil {
 		return nil
 	}
