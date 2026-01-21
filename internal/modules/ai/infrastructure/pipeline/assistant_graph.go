@@ -308,10 +308,12 @@ func (p *AssistantPipeline) persistNode(ctx context.Context, st *assistantState,
 
 	// 1. 保存user消息
 	userMsg := &assistant.AIAssistantMessage{
-		SessionId: st.SessionID,
-		Role:      "user",
-		Content:   st.Req.Question,
-		CreatedAt: now,
+		SessionId:     st.SessionID,
+		Role:          "user",
+		Content:       st.Req.Question,
+		CitationsJson: "[]",
+		TokensJson:    "{}",
+		CreatedAt:     now,
 	}
 	if err := p.messageRepo.SaveMessage(ctx, userMsg); err != nil {
 		zlog.Error("failed to save user message", zap.Error(err))
