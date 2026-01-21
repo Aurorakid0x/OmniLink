@@ -207,6 +207,7 @@ func init() {
 		authed.POST("/ai/assistant/chat", aiAssistantH.Chat)
 		authed.POST("/ai/assistant/chat/stream", aiAssistantH.ChatStream)
 		authed.GET("/ai/assistant/sessions", aiAssistantH.ListSessions)
+		authed.GET("/ai/assistant/sessions/:session_id/messages", aiAssistantH.GetSessionMessages)
 		authed.GET("/ai/assistant/agents", aiAssistantH.ListAgents)
 	}
 	authed.POST("/contact/getUserList", contactH.GetUserList)

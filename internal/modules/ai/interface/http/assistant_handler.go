@@ -185,6 +185,50 @@ func (h *AssistantHandler) ListAgents(c *gin.Context) {
 	back.Result(c, data, err)
 }
 
+// GetSessionMessages 获取会话历史消息列表
+//
+// 路由: GET /ai/assistant/sessions/:session_id/messages
+// 鉴权: 需要JWT
+// 路径参数: session_id
+// 查询参数: limit, offset
+// 响应体: AssistantMessageListRespond
+func (h *AssistantHandler) GetSessionMessages(c *gin.Context) {
+	// 从JWT中提取tenant_user_id
+	uuid := strings.TrimSpace(c.GetString("uuid"))
+	if uuid == "" {
+		back.Error(c, xerr.Unauthorized, "未登录")
+		return
+	}
+
+	// 从路径参数获取session_id
+	sessionID := strings.TrimSpace(c.Param("session_id"))
+	if sessionID == "" {
+		back.Error(c, xerr.BadRequest, "session_id is required")
+		return
+	}
+
+	// 解析查询参数
+	limit := 20
+	offset := 0
+	if l, ok := c.GetQuery("limit"); ok {
+		if n, err := parsePositiveInt(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if o, ok := c.GetQuery("offset"); ok {
+		if n, err := parsePositiveInt(o); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	// 调用Service
+	data, err := h.svc.GetSessionMessages(c.Request.Context(), sessionID, uuid, limit, offset)
+	if err != nil {
+		zlog.Error("assistant get session messages failed", zap.Error(err), zap.String("uuid", uuid), zap.String("session_id", sessionID))
+	}
+	back.Result(c, data, err)
+}
+
 // parsePositiveInt 解析正整数
 func parsePositiveInt(s string) (int, error) {
 	var n int

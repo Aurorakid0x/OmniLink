@@ -21,3 +21,10 @@ type AssistantAgentListRequest struct {
 	Limit  int `json:"limit"`  // 每页数量（默认20）
 	Offset int `json:"offset"` // 偏移量（默认0）
 }
+
+// AssistantMessageListRequest 获取会话历史消息列表请求
+type AssistantMessageListRequest struct {
+	SessionID string `json:"session_id"` // 会话ID（必填）
+	Limit     int    `json:"limit"`      // 每页数量（默认20）
+	Offset    int    `json:"offset"`     // 偏移量（默认0）
+}

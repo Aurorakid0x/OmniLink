@@ -155,7 +155,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useStore } from 'vuex'
 import { MagicStick, Plus, Document, Loading } from '@element-plus/icons-vue'
-import { getSessions, getAgents, chatStream } from '../api/ai'
+import { getSessions, getAgents, chatStream, getSessionMessages } from '../api/ai'
 import { ElMessage } from 'element-plus'
 
 const store = useStore()
@@ -214,9 +214,23 @@ const loadAgents = async () => {
 }
 
 // Select session
-const handleSelectSession = (session) => {
+const handleSelectSession = async (session) => {
   currentSessionId.value = session.session_id
-  currentMessages.value = session.messages || []
+  currentMessages.value = []
+  
+  // Load session message history
+  if (session.session_id) {
+    try {
+      const res = await getSessionMessages(session.session_id, { limit: 100, offset: 0 })
+      if (res.data && res.data.code === 200 && res.data.data) {
+        currentMessages.value = res.data.data.messages || []
+      }
+    } catch (e) {
+      console.error('Failed to load session messages:', e)
+      ElMessage.warning('加载历史消息失败')
+    }
+  }
+  
   scrollToBottom()
 }
 

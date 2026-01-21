@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"OmniLink/internal/modules/ai/application/dto/request"
 	"OmniLink/internal/modules/ai/application/dto/respond"
+	"OmniLink/internal/modules/ai/domain/assistant"
 	"OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/internal/modules/ai/infrastructure/pipeline"
 )
@@ -25,6 +27,9 @@ type AssistantService interface {
 
 	// ListAgents 获取Agent列表
 	ListAgents(ctx context.Context, tenantUserID string, limit, offset int) (*respond.AssistantAgentListRespond, error)
+
+	// GetSessionMessages 获取会话历史消息列表
+	GetSessionMessages(ctx context.Context, sessionID, tenantUserID string, limit, offset int) (*respond.AssistantMessageListRespond, error)
 }
 
 // StreamEvent SSE流式事件
@@ -230,4 +235,90 @@ func truncateSummary(content string, maxLen int) string {
 		return string(runes[:maxLen]) + "..."
 	}
 	return content
+}
+
+func (s *assistantServiceImpl) GetSessionMessages(ctx context.Context, sessionID, tenantUserID string, limit, offset int) (*respond.AssistantMessageListRespond, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	tenantUserID = strings.TrimSpace(tenantUserID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	if tenantUserID == "" {
+		return nil, fmt.Errorf("tenant_user_id is required")
+	}
+
+	// 验证会话归属权限
+	session, err := s.sessionRepo.GetSessionByID(ctx, sessionID, tenantUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	if session == nil {
+		return nil, fmt.Errorf("session not found or access denied")
+	}
+
+	// 设置默认分页参数
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// 获取消息总数
+	totalCount, err := s.messageRepo.CountSessionMessages(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count messages: %w", err)
+	}
+
+	// 获取消息列表（按时间正序）
+	messages, err := s.messageRepo.ListRecentMessages(ctx, sessionID, limit+offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list messages: %w", err)
+	}
+
+	// 应用offset和limit（因为ListRecentMessages只支持limit）
+	if offset >= len(messages) {
+		messages = []*assistant.AIAssistantMessage{}
+	} else {
+		messages = messages[offset:]
+		if len(messages) > limit {
+			messages = messages[:limit]
+		}
+	}
+
+	// 转换为DTO
+	items := make([]*respond.AssistantMessageItem, 0, len(messages))
+	for _, msg := range messages {
+		item := &respond.AssistantMessageItem{
+			Role:      msg.Role,
+			Content:   msg.Content,
+			CreatedAt: msg.CreatedAt,
+		}
+
+		// 解析citations（仅assistant消息有）
+		if msg.Role == "assistant" && msg.CitationsJson != "" {
+			var citations []respond.CitationEntry
+			if err := json.Unmarshal([]byte(msg.CitationsJson), &citations); err == nil {
+				item.Citations = citations
+			}
+		}
+
+		// 解析tokens统计（可选）
+		if msg.TokensJson != "" {
+			var tokensMap map[string]int
+			if err := json.Unmarshal([]byte(msg.TokensJson), &tokensMap); err == nil {
+				item.TokensPrompt = tokensMap["prompt_tokens"]
+				item.TokensAnswer = tokensMap["answer_tokens"]
+				item.TokensTotal = tokensMap["total_tokens"]
+			}
+		}
+
+		items = append(items, item)
+	}
+
+	return &respond.AssistantMessageListRespond{
+		SessionID: sessionID,
+		Messages:  items,
+		Total:     int(totalCount),
+	}, nil
 }

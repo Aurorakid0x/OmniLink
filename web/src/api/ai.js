@@ -53,3 +53,13 @@ export const getSessions = () => {
 export const getAgents = () => {
   return request.get('/ai/assistant/agents')
 }
+
+/**
+ * Get session message history
+ * @param {string} sessionId - Session ID
+ * @param {Object} params - { limit, offset }
+ * @returns {Promise}
+ */
+export const getSessionMessages = (sessionId, params = {}) => {
+  return request.get(`/ai/assistant/sessions/${sessionId}/messages`, { params })
+}

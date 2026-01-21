@@ -70,3 +70,21 @@ type AssistantAgentListRespond struct {
 	Agents []*AssistantAgentItem `json:"agents"` // Agent列表
 	Total  int                   `json:"total"`  // 总数
 }
+
+// AssistantMessageItem 单条消息项
+type AssistantMessageItem struct {
+	Role         string          `json:"role"`          // 角色：user/assistant/system
+	Content      string          `json:"content"`       // 消息内容
+	Citations    []CitationEntry `json:"citations"`     // 引用列表（assistant消息才有）
+	CreatedAt    time.Time       `json:"created_at"`    // 创建时间
+	TokensPrompt int             `json:"tokens_prompt"` // Prompt token数（可选）
+	TokensAnswer int             `json:"tokens_answer"` // Answer token数（可选）
+	TokensTotal  int             `json:"tokens_total"`  // 总token数（可选）
+}
+
+// AssistantMessageListRespond 会话历史消息列表响应
+type AssistantMessageListRespond struct {
+	SessionID string                  `json:"session_id"` // 会话ID
+	Messages  []*AssistantMessageItem `json:"messages"`   // 消息列表（按时间正序）
+	Total     int                     `json:"total"`      // 总消息数
+}
