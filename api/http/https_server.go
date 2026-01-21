@@ -106,7 +106,7 @@ func init() {
 				if err != nil {
 					zlog.Warn("ai embedder init failed: " + err.Error() + "; fallback to mock")
 					embedder = aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
-					embMeta = aiEmbedding.EmbedderMeta{Provider: "mock", Model: "mock", Dim: conf.MilvusConfig.VectorDim}
+					embMeta = aiEmbedding.EmbedderMeta{Provider: "mock", Model: "mock"}
 				}
 				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, embMeta.Provider, embMeta.Model, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
 				if err != nil {
