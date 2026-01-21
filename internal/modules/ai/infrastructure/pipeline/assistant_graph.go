@@ -213,9 +213,10 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 	// 2. 历史消息（最近N轮）
 	for _, msg := range st.Messages {
 		role := schema.User
-		if msg.Role == "assistant" {
+		switch msg.Role {
+		case "assistant":
 			role = schema.Assistant
-		} else if msg.Role == "system" {
+		case "system":
 			role = schema.System
 		}
 		promptMsgs = append(promptMsgs, schema.Message{

@@ -113,12 +113,6 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 	}
 
 	// 手动执行前3个节点
-	st := &assistantState{
-		Req:   req,
-		Start: time.Now(),
-	}
-
-	// Node 1: LoadMemory
 	st, err := p.loadMemoryNode(ctx, req)
 	if err != nil || st.Err != nil {
 		return nil, nil, getError(err, st.Err)

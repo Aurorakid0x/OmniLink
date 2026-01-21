@@ -155,7 +155,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useStore } from 'vuex'
 import { MagicStick, Plus, Document, Loading } from '@element-plus/icons-vue'
-import { getSessions, getAgents, chatStream, getSessionMessages } from '../api/ai'
+import { getSessions, getAgents, getSessionMessages, chatStream } from '../api/ai'
 import { ElMessage } from 'element-plus'
 
 const store = useStore()

@@ -35,6 +35,9 @@ type AssistantMessageRepository interface {
 	// ListRecentMessages 获取会话最近N条消息（按时间正序，用于构建上下文）
 	ListRecentMessages(ctx context.Context, sessionId string, limit int) ([]*assistant.AIAssistantMessage, error)
 
+	ListMessages(ctx context.Context, sessionId string, limit, offset int) ([]*assistant.AIAssistantMessage, error)
+	// - ListRecentMessages：取“最近 N 条”，按时间倒序取出，再反转为正序。适合用于构建 Prompt 的“最近上下文”，不适合分页。
+	// - ListMessages：按时间正序，支持 limit/offset 的稳定分页。用于历史消息列表展示更合适。 <br/> 结论： 有必要新开函数 ，一个用于“上下文窗口”，一个用于“分页列表”。
 	// CountSessionMessages 统计会话消息数量
 	CountSessionMessages(ctx context.Context, sessionId string) (int64, error)
 }

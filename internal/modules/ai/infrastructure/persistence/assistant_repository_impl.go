@@ -126,7 +126,7 @@ func (r *assistantMessageRepositoryImpl) ListRecentMessages(ctx context.Context,
 		return []*assistant.AIAssistantMessage{}, nil
 	}
 	if limit <= 0 {
-		limit = 12 // 默认6轮对话（12条消息）
+		limit = 12
 	}
 
 	var messages []*assistant.AIAssistantMessage
@@ -139,10 +139,35 @@ func (r *assistantMessageRepositoryImpl) ListRecentMessages(ctx context.Context,
 		return nil, err
 	}
 
-	// 反转顺序（从旧到新）
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]
 	}
+	return messages, nil
+}
+
+func (r *assistantMessageRepositoryImpl) ListMessages(ctx context.Context, sessionId string, limit, offset int) ([]*assistant.AIAssistantMessage, error) {
+	sessionId = strings.TrimSpace(sessionId)
+	if sessionId == "" {
+		return []*assistant.AIAssistantMessage{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var messages []*assistant.AIAssistantMessage
+	err := r.db.WithContext(ctx).
+		Where("session_id = ?", sessionId).
+		Order("created_at ASC").
+		Limit(limit).
+		Offset(offset).
+		Find(&messages).Error
+	if err != nil {
+		return nil, err
+	}
+
 	return messages, nil
 }
 
