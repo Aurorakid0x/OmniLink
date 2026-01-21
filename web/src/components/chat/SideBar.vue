@@ -25,6 +25,14 @@
 
       <div 
         class="nav-item" 
+        :class="{ active: activeTab === 'assistant' }"
+        @click="router.push('/assistant')"
+      >
+        <el-icon><MagicStick /></el-icon>
+      </div>
+
+      <div 
+        class="nav-item" 
         :class="{ active: activeTab === 'me' }"
         @click="$emit('update:activeTab', 'me')"
       >
@@ -41,7 +49,7 @@
 </template>
 
 <script setup>
-import { ChatDotRound, User, Setting, SwitchButton } from '@element-plus/icons-vue'
+import { ChatDotRound, User, Setting, SwitchButton, MagicStick } from '@element-plus/icons-vue'
 import { useStore } from 'vuex'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'

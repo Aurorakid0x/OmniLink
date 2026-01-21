@@ -2,6 +2,8 @@ package initial
 
 import (
 	"OmniLink/internal/config"
+	aiAgent "OmniLink/internal/modules/ai/domain/agent"
+	aiAssistant "OmniLink/internal/modules/ai/domain/assistant"
 	aiRag "OmniLink/internal/modules/ai/domain/rag"
 	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	contactEntity "OmniLink/internal/modules/contact/domain/entity"
@@ -58,6 +60,10 @@ func init() {
 		&aiRag.AIVectorRecord{},
 		&aiRag.AIIngestEvent{},
 		&aiRag.AIBackfillJob{},
+
+		&aiAssistant.AIAssistantSession{},
+		&aiAssistant.AIAssistantMessage{},
+		&aiAgent.AIAgent{},
 	)
 	// 自动迁移，如果没有建表，会自动创建对应的表
 	if err != nil {

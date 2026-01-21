@@ -10,6 +10,7 @@ import (
 	aiService "OmniLink/internal/modules/ai/application/service"
 	aiChunking "OmniLink/internal/modules/ai/infrastructure/chunking"
 	aiEmbedding "OmniLink/internal/modules/ai/infrastructure/embedding"
+	aiLLM "OmniLink/internal/modules/ai/infrastructure/llm"
 	aiKafka "OmniLink/internal/modules/ai/infrastructure/mq/kafka"
 	aiPersistence "OmniLink/internal/modules/ai/infrastructure/persistence"
 	aiPipeline "OmniLink/internal/modules/ai/infrastructure/pipeline"
@@ -57,6 +58,7 @@ func init() {
 	conf := config.GetConfig()
 	var aiAdminH *aiHTTP.AdminHandler
 	var aiQueryH *aiHTTP.QueryHandler
+	var aiAssistantH *aiHTTP.AssistantHandler
 	var aiAsyncIngest aiService.AsyncIngestService
 	if initial.MilvusClient != nil {
 		metric := entity.COSINE
@@ -120,6 +122,35 @@ func init() {
 					} else {
 						retrieveSvc := aiService.NewRetrieveService(retrievePipeline)
 						aiQueryH = aiHTTP.NewQueryHandler(retrieveSvc)
+
+						// AI Assistant Pipeline & Service & Handler
+						chatModel, chatMeta, err := aiLLM.NewChatModelFromConfig(context.Background(), conf)
+						if err != nil {
+							zlog.Warn("ai chat model init failed: " + err.Error())
+						} else {
+							sessionRepo := aiPersistence.NewAssistantSessionRepository(initial.GormDB)
+							messageRepo := aiPersistence.NewAssistantMessageRepository(initial.GormDB)
+							agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
+
+							assistantPipeline, err := aiPipeline.NewAssistantPipeline(
+								sessionRepo,
+								messageRepo,
+								agentRepo,
+								ragRepo,
+								retrievePipeline,
+								chatModel,
+								aiPipeline.ChatModelMeta{
+									Provider: chatMeta.Provider,
+									Model:    chatMeta.Model,
+								},
+							)
+							if err != nil {
+								zlog.Warn("ai assistant pipeline init failed: " + err.Error())
+							} else {
+								assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, assistantPipeline)
+								aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
+							}
+						}
 					}
 					consumer, err := aiKafka.NewConsumer(aiKafka.ConsumerConfig{
 						Brokers:  conf.KafkaConfig.Brokers,
@@ -171,6 +202,12 @@ func init() {
 	}
 	if aiQueryH != nil {
 		authed.POST("/ai/rag/query", aiQueryH.Query)
+	}
+	if aiAssistantH != nil {
+		authed.POST("/ai/assistant/chat", aiAssistantH.Chat)
+		authed.POST("/ai/assistant/chat/stream", aiAssistantH.ChatStream)
+		authed.GET("/ai/assistant/sessions", aiAssistantH.ListSessions)
+		authed.GET("/ai/assistant/agents", aiAssistantH.ListAgents)
 	}
 	authed.POST("/contact/getUserList", contactH.GetUserList)
 	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)
