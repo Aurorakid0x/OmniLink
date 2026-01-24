@@ -36,6 +36,8 @@ import (
 	userHandler "OmniLink/internal/modules/user/interface/http"
 	"OmniLink/pkg/ws"
 	"OmniLink/pkg/zlog"
+	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/cloudwego/eino/schema"
@@ -87,13 +89,25 @@ func (a *mcpToolDispatcherAdapter) ListTools(ctx context.Context, tenantUserID s
 
 	einoTools := make([]*schema.ToolInfo, 0, len(mcpTools))
 	for _, t := range mcpTools {
+		desc := t.Description
+		// 临时方案：将 InputSchema 序列化后追加到 Description 中，
+		// 绕过 schema.NewParamsOneOf 类型不确定的问题。
+		// 许多 LLM 能够理解这种描述中的 JSON Schema。
+		if len(t.InputSchema) > 0 {
+			if schemaBytes, err := json.Marshal(t.InputSchema); err == nil {
+				desc += fmt.Sprintf("\nArguments Schema: %s", string(schemaBytes))
+			}
+		}
+
 		einoTools = append(einoTools, &schema.ToolInfo{
 			Name: t.Name,
-			Desc: t.Description,
+			Desc: desc,
 		})
 	}
 	return einoTools, nil
 }
+
+// 辅助函数已移除，避免使用未定义的 schema 常量
 
 var GE *gin.Engine
 
