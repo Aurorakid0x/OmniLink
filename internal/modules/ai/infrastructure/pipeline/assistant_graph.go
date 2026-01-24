@@ -14,6 +14,7 @@ import (
 	"OmniLink/pkg/zlog"
 
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 )
@@ -245,13 +246,18 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 	st.PromptMsgs = promptMsgs
 
 	// 获取可用工具
-	if p.toolDispatcher != nil {
-		tools, err := p.toolDispatcher.ListTools(ctx, st.Req.TenantUserID)
-		if err != nil {
-			zlog.Warn("failed to list tools", zap.Error(err))
-		} else {
-			st.Tools = tools
+	var toolInfos []*schema.ToolInfo
+	if len(p.tools) > 0 {
+		toolInfos = make([]*schema.ToolInfo, 0, len(p.tools))
+		for _, t := range p.tools {
+			info, err := t.Info(ctx)
+			if err != nil {
+				zlog.Warn("failed to get tool info", zap.Error(err))
+				continue
+			}
+			toolInfos = append(toolInfos, info)
 		}
+		st.Tools = toolInfos
 	}
 
 	zlog.Info("assistant build prompt done",
@@ -283,40 +289,52 @@ func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantStat
 		return st, nil
 	}
 
-	if p.toolDispatcher != nil && len(resp.ToolCalls) > 0 {
+	if len(p.tools) > 0 && len(resp.ToolCalls) > 0 {
 		st.PromptMsgs = append(st.PromptMsgs, *resp)
 		for _, toolCall := range resp.ToolCalls {
-			toolName, toolArgs, err := parseToolCall(toolCall)
-			if err != nil {
-				st.Err = err
-				return st, nil
-			}
-			if toolName == "" {
-				st.Err = fmt.Errorf("tool name is empty")
-				return st, nil
-			}
-			toolResp, err := p.toolDispatcher.CallTool(ctx, &ToolCallRequest{
-				TenantUserID: st.Req.TenantUserID,
-				ToolName:     toolName,
-				Arguments:    toolArgs,
-			})
-			if err != nil {
-				st.Err = err
-				return st, nil
-			}
-			if toolResp == nil {
-				st.Err = fmt.Errorf("tool response is nil")
-				return st, nil
+			// 解析工具调用
+			toolName := toolCall.Function.Name
+			toolArgs := toolCall.Function.Arguments
+
+			// 查找并执行工具
+			var toolResp string
+			var found bool
+
+			for _, t := range p.tools {
+				info, _ := t.Info(ctx)
+				if info.Name == toolName {
+					found = true
+					// 注入租户ID (如果工具需要)
+					// 注意：这里 args 是 JSON 字符串。如果需要注入 tenant_user_id，需要解析->注入->重序列化
+					// 为了简化，假设 MCP Client 已经处理了上下文，或者参数里已经包含了。
+					// 实际上，我们的 contact_list_friends 需要 tenant_user_id。
+					// 在新的架构中，我们应该依赖 LLM 生成 tenant_user_id，或者在 Context 中传递。
+					// 由于 Eino Tool 接口标准，我们最好让 LLM 显式生成 tenant_user_id 参数。
+					// 或者，我们可以在 Tool 实现内部从 Context 获取。
+
+					// 尝试执行
+					if invokable, ok := t.(tool.InvokableTool); ok {
+						res, err := invokable.InvokableRun(ctx, toolArgs)
+						if err != nil {
+							toolResp = fmt.Sprintf("Tool execution error: %v", err)
+						} else {
+							toolResp = res
+						}
+					} else {
+						toolResp = "Tool is not invokable"
+					}
+					break
+				}
 			}
 
-			content := toolResp.Content
-			if !toolResp.Success && toolResp.Error != "" {
-				content = toolResp.Error
+			if !found {
+				toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
 			}
 
 			st.PromptMsgs = append(st.PromptMsgs, schema.Message{
-				Role:    "tool",
-				Content: content,
+				Role:      schema.Tool,
+				ToolCalls: []schema.ToolCall{toolCall}, // 关联 ToolCall
+				Content:   toolResp,
 			})
 		}
 

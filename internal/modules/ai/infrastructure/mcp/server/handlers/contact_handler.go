@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"OmniLink/internal/modules/ai/infrastructure/mcp/types"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
 	contactService "OmniLink/internal/modules/contact/application/service"
 )
@@ -22,36 +24,31 @@ func NewContactToolHandler(svc contactService.ContactService) *ContactToolHandle
 	}
 }
 
-// RegisterTools 注册所有好友相关工具
-func (h *ContactToolHandler) RegisterTools() []types.ToolInfo {
-	return []types.ToolInfo{
-		{
-			Descriptor: types.ToolDescriptor{
-				Name:        "contact_list_friends",
-				Description: "获取用户的好友列表，返回好友基本信息（用户名、头像、状态）",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"tenant_user_id": map[string]string{
-							"type":        "string",
-							"description": "租户用户ID（必填，从上下文获取）",
-						},
-					},
-					"required": []string{"tenant_user_id"},
-				},
-			},
-			Handler: h.handleListFriends,
-		},
-		// 可以在这里添加更多工具：contact_get_info, contact_apply 等
-	}
+// RegisterTools 注册所有好友相关工具到 Server
+func (h *ContactToolHandler) RegisterTools(s *server.MCPServer) {
+	// 注册 contact_list_friends 工具
+	tool := mcp.NewTool("contact_list_friends",
+		mcp.WithDescription("获取用户的好友列表，返回好友基本信息（用户名、头像、状态）"),
+		mcp.WithString("tenant_user_id", mcp.Required(), mcp.Description("租户用户ID（必填，从上下文获取）")),
+	)
+
+	s.AddTool(tool, h.handleListFriends)
 }
 
 // handleListFriends 处理获取好友列表
-func (h *ContactToolHandler) handleListFriends(ctx context.Context, args map[string]interface{}) (*types.CallToolResult, error) {
+func (h *ContactToolHandler) handleListFriends(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// 1. 参数校验
+	var args map[string]interface{}
+	var ok bool
+
+	// mcp-go server 接收到的 Arguments 通常是 map[string]interface{}
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
 	tenantUserID, ok := args["tenant_user_id"].(string)
 	if !ok || strings.TrimSpace(tenantUserID) == "" {
-		return nil, types.NewMCPError(types.ErrCodeInvalidParams, "tenant_user_id is required and must be a non-empty string")
+		return mcp.NewToolResultError("tenant_user_id is required"), nil
 	}
 
 	// 2. 调用 ContactService 获取好友列表
@@ -59,38 +56,19 @@ func (h *ContactToolHandler) handleListFriends(ctx context.Context, args map[str
 		OwnerId: tenantUserID,
 	})
 	if err != nil {
-		return &types.CallToolResult{
-			Content: []types.Content{
-				{
-					Type: "text",
-					Text: fmt.Sprintf("查询好友列表失败：%v", err),
-				},
-			},
-			IsError: true,
-		}, nil
+		return mcp.NewToolResultError(fmt.Sprintf("查询好友列表失败：%v", err)), nil
 	}
 
 	// 3. 转换为人类可读文本
 	textContent := h.formatFriendsAsText(friends, tenantUserID)
 
 	// 4. 返回 MCP 结果
-	return &types.CallToolResult{
-		Content: []types.Content{
-			{
-				Type: "text",
-				Text: textContent,
-			},
-		},
-		Metadata: map[string]interface{}{
-			"friends": friends,
-			"total":   len(friends),
-		},
-		IsError: false,
-	}, nil
+	return mcp.NewToolResultText(textContent), nil
 }
 
 // formatFriendsAsText 将好友列表格式化为文本
 func (h *ContactToolHandler) formatFriendsAsText(friends interface{}, tenantUserID string) string {
+	// ... (保持原有逻辑不变)
 	// 类型断言
 	friendList, ok := friends.([]interface{})
 	if !ok {

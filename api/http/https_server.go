@@ -21,9 +21,12 @@ import (
 	aiHTTP "OmniLink/internal/modules/ai/interface/http"
 
 	// MCP Imports
-	mcpRegistry "OmniLink/internal/modules/ai/infrastructure/mcp/registry"
-	mcpServer "OmniLink/internal/modules/ai/infrastructure/mcp/server"
-	mcpHandlers "OmniLink/internal/modules/ai/infrastructure/mcp/server/handlers"
+	einoMCP "github.com/cloudwego/eino-ext/components/tool/mcp"
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
+
+	omniMcpServer "OmniLink/internal/modules/ai/infrastructure/mcp/server"
 
 	chatService "OmniLink/internal/modules/chat/application/service"
 	chatPersistence "OmniLink/internal/modules/chat/infrastructure/persistence"
@@ -36,78 +39,13 @@ import (
 	userHandler "OmniLink/internal/modules/user/interface/http"
 	"OmniLink/pkg/ws"
 	"OmniLink/pkg/zlog"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/cloudwego/eino/schema"
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 )
-
-type mcpToolDispatcherAdapter struct {
-	dispatcher aiService.MCPDispatcher
-}
-
-func (a *mcpToolDispatcherAdapter) CallTool(ctx context.Context, req *aiPipeline.ToolCallRequest) (*aiPipeline.ToolCallResponse, error) {
-	if a == nil || a.dispatcher == nil {
-		return &aiPipeline.ToolCallResponse{Success: false, Error: "mcp dispatcher is nil"}, nil
-	}
-	if req == nil {
-		return &aiPipeline.ToolCallResponse{Success: false, Error: "tool call request is nil"}, nil
-	}
-	resp, err := a.dispatcher.CallTool(ctx, &aiService.ToolCallRequest{
-		TenantUserID: req.TenantUserID,
-		ToolName:     req.ToolName,
-		Arguments:    req.Arguments,
-		Timeout:      req.Timeout,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return &aiPipeline.ToolCallResponse{Success: false, Error: "mcp dispatcher response is nil"}, nil
-	}
-	return &aiPipeline.ToolCallResponse{
-		Success:  resp.Success,
-		Content:  resp.Content,
-		Metadata: resp.Metadata,
-		Error:    resp.Error,
-	}, nil
-}
-
-func (a *mcpToolDispatcherAdapter) ListTools(ctx context.Context, tenantUserID string) ([]*schema.ToolInfo, error) {
-	if a == nil || a.dispatcher == nil {
-		return nil, nil
-	}
-
-	mcpTools, err := a.dispatcher.ListAvailableTools(ctx, tenantUserID)
-	if err != nil {
-		return nil, err
-	}
-
-	einoTools := make([]*schema.ToolInfo, 0, len(mcpTools))
-	for _, t := range mcpTools {
-		desc := t.Description
-		// 临时方案：将 InputSchema 序列化后追加到 Description 中，
-		// 绕过 schema.NewParamsOneOf 类型不确定的问题。
-		// 许多 LLM 能够理解这种描述中的 JSON Schema。
-		if len(t.InputSchema) > 0 {
-			if schemaBytes, err := json.Marshal(t.InputSchema); err == nil {
-				desc += fmt.Sprintf("\nArguments Schema: %s", string(schemaBytes))
-			}
-		}
-
-		einoTools = append(einoTools, &schema.ToolInfo{
-			Name: t.Name,
-			Desc: desc,
-		})
-	}
-	return einoTools, nil
-}
-
-// 辅助函数已移除，避免使用未定义的 schema 常量
 
 var GE *gin.Engine
 
@@ -256,40 +194,66 @@ func init() {
 	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, aiAsyncIngest)
 
 	// MCP Initialization
-	var mcpDispatcher aiService.MCPDispatcher
-	_ = mcpDispatcher
 	if conf.MCPConfig.Enabled {
 		zlog.Info("Initializing MCP components...")
 
-		// 1. 创建 Registry
-		serverRegistry := mcpRegistry.NewServerRegistry()
+		var allTools []tool.BaseTool
 
-		// 2. 创建并注册内置 Server
+		// 1. 创建并注册内置 Server (使用 mcp-go)
 		if conf.MCPConfig.BuiltinServer.Enabled {
-			builtinServer := mcpServer.NewBuiltinMCPServer(
-				conf.MCPConfig.BuiltinServer.Name,
-				conf.MCPConfig.BuiltinServer.Version,
-				conf.MCPConfig.BuiltinServer.Description,
+			// 使用工厂函数创建 Server
+			s := omniMcpServer.NewBuiltinMCPServer(
+				omniMcpServer.BuiltinServerConfig{
+					Name:               conf.MCPConfig.BuiltinServer.Name,
+					Version:            conf.MCPConfig.BuiltinServer.Version,
+					EnableContactTools: conf.MCPConfig.BuiltinServer.EnableContactTools,
+					EnableGroupTools:   conf.MCPConfig.BuiltinServer.EnableGroupTools,
+					EnableMessageTools: conf.MCPConfig.BuiltinServer.EnableMessageTools,
+					EnableSessionTools: conf.MCPConfig.BuiltinServer.EnableSessionTools,
+				},
+				omniMcpServer.BuiltinServerDependencies{
+					ContactSvc: contactSvc,
+					GroupSvc:   groupSvc,
+					MessageSvc: messageSvc,
+					SessionSvc: sessionSvc,
+				},
 			)
 
-			// 注册工具
-			if conf.MCPConfig.BuiltinServer.EnableContactTools {
-				contactHandler := mcpHandlers.NewContactToolHandler(contactSvc)
-				builtinServer.RegisterTools(contactHandler.RegisterTools())
-			}
-			// TODO: Register Group/Message tools
+			// 创建 In-Process Client 并连接
+			inProcCli, err := client.NewInProcessClient(s)
+			if err != nil {
+				zlog.Error("Failed to create in-process client: " + err.Error())
+			} else {
+				initReq := mcp.InitializeRequest{}
+				initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+				initReq.Params.ClientInfo = mcp.Implementation{
+					Name:    "omnilink-internal-client",
+					Version: "1.0.0",
+				}
 
-			if err := serverRegistry.RegisterBuiltinServer(builtinServer.GetServerInfo().Name, builtinServer, 100); err != nil {
-				zlog.Error("Failed to register builtin MCP server: " + err.Error())
+				if _, err := inProcCli.Initialize(context.Background(), initReq); err != nil {
+					zlog.Error("Failed to initialize builtin MCP client: " + err.Error())
+				} else {
+					// 转换为 Eino Tools
+					builtinTools, err := einoMCP.GetTools(context.Background(), &einoMCP.Config{
+						Cli: inProcCli,
+					})
+					if err != nil {
+						zlog.Error("Failed to get builtin tools: " + err.Error())
+					} else {
+						allTools = append(allTools, builtinTools...)
+						zlog.Info(fmt.Sprintf("Registered %d builtin tools", len(builtinTools)))
+					}
+				}
 			}
 		}
 
-		// 3. 创建 Dispatcher
-		mcpDispatcher = aiService.NewMCPDispatcher(serverRegistry, conf.MCPConfig.ToolCallTimeoutSeconds)
+		// 2. 注入 Pipeline
+		if assistantPipeline != nil {
+			assistantPipeline.SetTools(allTools)
+		}
+
 		zlog.Info("MCP initialization completed")
-	}
-	if mcpDispatcher != nil && assistantPipeline != nil {
-		assistantPipeline.SetToolDispatcher(&mcpToolDispatcherAdapter{dispatcher: mcpDispatcher})
 	}
 
 	userH := userHandler.NewUserInfoHandler(userSvc)
