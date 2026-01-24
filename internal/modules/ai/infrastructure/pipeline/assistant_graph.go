@@ -13,6 +13,7 @@ import (
 	"OmniLink/pkg/util"
 	"OmniLink/pkg/zlog"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 )
@@ -34,6 +35,7 @@ type assistantState struct {
 	SearchMs      int64
 	PostProcessMs int64
 	LLMMs         int64
+	Tools         []*schema.ToolInfo
 	Err           error
 }
 
@@ -242,6 +244,16 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 
 	st.PromptMsgs = promptMsgs
 
+	// 获取可用工具
+	if p.toolDispatcher != nil {
+		tools, err := p.toolDispatcher.ListTools(ctx, st.Req.TenantUserID)
+		if err != nil {
+			zlog.Warn("failed to list tools", zap.Error(err))
+		} else {
+			st.Tools = tools
+		}
+	}
+
 	zlog.Info("assistant build prompt done",
 		zap.String("query_id", st.QueryID),
 		zap.Int("prompt_msgs", len(promptMsgs)),
@@ -259,23 +271,71 @@ func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantStat
 
 	llmStart := time.Now()
 
-	// 转换为指针数组
 	promptMsgs := make([]*schema.Message, len(st.PromptMsgs))
 	for i := range st.PromptMsgs {
 		promptMsgs[i] = &st.PromptMsgs[i]
 	}
 
-	// 调用ChatModel
-	resp, err := p.chatModel.Generate(ctx, promptMsgs)
+	// 第一次调用 LLM，传入工具定义
+	resp, err := p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
 	if err != nil {
 		st.Err = err
 		return st, nil
 	}
 
+	if p.toolDispatcher != nil && len(resp.ToolCalls) > 0 {
+		st.PromptMsgs = append(st.PromptMsgs, *resp)
+		for _, toolCall := range resp.ToolCalls {
+			toolName, toolArgs, err := parseToolCall(toolCall)
+			if err != nil {
+				st.Err = err
+				return st, nil
+			}
+			if toolName == "" {
+				st.Err = fmt.Errorf("tool name is empty")
+				return st, nil
+			}
+			toolResp, err := p.toolDispatcher.CallTool(ctx, &ToolCallRequest{
+				TenantUserID: st.Req.TenantUserID,
+				ToolName:     toolName,
+				Arguments:    toolArgs,
+			})
+			if err != nil {
+				st.Err = err
+				return st, nil
+			}
+			if toolResp == nil {
+				st.Err = fmt.Errorf("tool response is nil")
+				return st, nil
+			}
+
+			content := toolResp.Content
+			if !toolResp.Success && toolResp.Error != "" {
+				content = toolResp.Error
+			}
+
+			st.PromptMsgs = append(st.PromptMsgs, schema.Message{
+				Role:    "tool",
+				Content: content,
+			})
+		}
+
+		promptMsgs = make([]*schema.Message, len(st.PromptMsgs))
+		for i := range st.PromptMsgs {
+			promptMsgs[i] = &st.PromptMsgs[i]
+		}
+
+		// 第二次调用 LLM，同样传入工具定义（保持上下文一致）
+		resp, err = p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
+		if err != nil {
+			st.Err = err
+			return st, nil
+		}
+	}
+
 	st.Answer = resp.Content
 	st.LLMMs = time.Since(llmStart).Milliseconds()
 
-	// Token统计（如果有）
 	if resp.ResponseMeta != nil {
 		usage := resp.ResponseMeta.Usage
 		if usage != nil {
@@ -386,6 +446,54 @@ func buildContextString(citations []respond.CitationEntry) string {
 		}
 	}
 	return sb.String()
+}
+
+func parseToolCall(call schema.ToolCall) (string, map[string]interface{}, error) {
+	payload, err := json.Marshal(call)
+	if err != nil {
+		return "", nil, err
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return "", nil, err
+	}
+
+	name := ""
+	if v, ok := raw["name"].(string); ok {
+		name = v
+	}
+
+	var fn map[string]interface{}
+	if v, ok := raw["function"].(map[string]interface{}); ok {
+		fn = v
+	}
+	if name == "" && fn != nil {
+		if v, ok := fn["name"].(string); ok {
+			name = v
+		}
+	}
+
+	args := make(map[string]interface{})
+	var argsVal interface{}
+	if v, ok := raw["arguments"]; ok {
+		argsVal = v
+	} else if fn != nil {
+		if v, ok := fn["arguments"]; ok {
+			argsVal = v
+		}
+	}
+
+	switch v := argsVal.(type) {
+	case string:
+		if v != "" {
+			_ = json.Unmarshal([]byte(v), &args)
+		}
+	case map[string]interface{}:
+		args = v
+	}
+
+	return name, args, nil
 }
 
 func truncateTitle(question string) string {

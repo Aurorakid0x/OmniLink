@@ -38,10 +38,62 @@ import (
 	"OmniLink/pkg/zlog"
 	"strings"
 
+	"github.com/cloudwego/eino/schema"
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 )
+
+type mcpToolDispatcherAdapter struct {
+	dispatcher aiService.MCPDispatcher
+}
+
+func (a *mcpToolDispatcherAdapter) CallTool(ctx context.Context, req *aiPipeline.ToolCallRequest) (*aiPipeline.ToolCallResponse, error) {
+	if a == nil || a.dispatcher == nil {
+		return &aiPipeline.ToolCallResponse{Success: false, Error: "mcp dispatcher is nil"}, nil
+	}
+	if req == nil {
+		return &aiPipeline.ToolCallResponse{Success: false, Error: "tool call request is nil"}, nil
+	}
+	resp, err := a.dispatcher.CallTool(ctx, &aiService.ToolCallRequest{
+		TenantUserID: req.TenantUserID,
+		ToolName:     req.ToolName,
+		Arguments:    req.Arguments,
+		Timeout:      req.Timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return &aiPipeline.ToolCallResponse{Success: false, Error: "mcp dispatcher response is nil"}, nil
+	}
+	return &aiPipeline.ToolCallResponse{
+		Success:  resp.Success,
+		Content:  resp.Content,
+		Metadata: resp.Metadata,
+		Error:    resp.Error,
+	}, nil
+}
+
+func (a *mcpToolDispatcherAdapter) ListTools(ctx context.Context, tenantUserID string) ([]*schema.ToolInfo, error) {
+	if a == nil || a.dispatcher == nil {
+		return nil, nil
+	}
+
+	mcpTools, err := a.dispatcher.ListAvailableTools(ctx, tenantUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	einoTools := make([]*schema.ToolInfo, 0, len(mcpTools))
+	for _, t := range mcpTools {
+		einoTools = append(einoTools, &schema.ToolInfo{
+			Name: t.Name,
+			Desc: t.Description,
+		})
+	}
+	return einoTools, nil
+}
 
 var GE *gin.Engine
 
@@ -65,6 +117,7 @@ func init() {
 	var aiAdminH *aiHTTP.AdminHandler
 	var aiQueryH *aiHTTP.QueryHandler
 	var aiAssistantH *aiHTTP.AssistantHandler
+	var assistantPipeline *aiPipeline.AssistantPipeline
 	var aiAsyncIngest aiService.AsyncIngestService
 	if initial.MilvusClient != nil {
 		metric := entity.COSINE
@@ -138,7 +191,7 @@ func init() {
 							messageRepo := aiPersistence.NewAssistantMessageRepository(initial.GormDB)
 							agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
 
-							assistantPipeline, err := aiPipeline.NewAssistantPipeline(
+							assistantPipeline, err = aiPipeline.NewAssistantPipeline(
 								sessionRepo,
 								messageRepo,
 								agentRepo,
@@ -149,6 +202,7 @@ func init() {
 									Provider: chatMeta.Provider,
 									Model:    chatMeta.Model,
 								},
+								nil,
 							)
 							if err != nil {
 								zlog.Warn("ai assistant pipeline init failed: " + err.Error())
@@ -219,6 +273,9 @@ func init() {
 		// 3. 创建 Dispatcher
 		mcpDispatcher = aiService.NewMCPDispatcher(serverRegistry, conf.MCPConfig.ToolCallTimeoutSeconds)
 		zlog.Info("MCP initialization completed")
+	}
+	if mcpDispatcher != nil && assistantPipeline != nil {
+		assistantPipeline.SetToolDispatcher(&mcpToolDispatcherAdapter{dispatcher: mcpDispatcher})
 	}
 
 	userH := userHandler.NewUserInfoHandler(userSvc)

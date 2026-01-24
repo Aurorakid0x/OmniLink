@@ -43,16 +43,36 @@ type TokenStats struct {
 	TotalTokens  int `json:"total_tokens"`
 }
 
+type ToolCallRequest struct {
+	TenantUserID string
+	ToolName     string
+	Arguments    map[string]interface{}
+	Timeout      int
+}
+
+type ToolCallResponse struct {
+	Success  bool
+	Content  string
+	Metadata map[string]interface{}
+	Error    string
+}
+
+type ToolDispatcher interface {
+	CallTool(ctx context.Context, req *ToolCallRequest) (*ToolCallResponse, error)
+	ListTools(ctx context.Context, tenantUserID string) ([]*schema.ToolInfo, error)
+}
+
 // AssistantPipeline AI助手Pipeline（基于Eino Graph）
 type AssistantPipeline struct {
-	sessionRepo  repository.AssistantSessionRepository
-	messageRepo  repository.AssistantMessageRepository
-	agentRepo    repository.AgentRepository
-	ragRepo      repository.RAGRepository
-	retrievePipe *RetrievePipeline
-	chatModel    model.BaseChatModel
-	chatMeta     ChatModelMeta
-	r            compose.Runnable[*AssistantRequest, *AssistantResult]
+	sessionRepo    repository.AssistantSessionRepository
+	messageRepo    repository.AssistantMessageRepository
+	agentRepo      repository.AgentRepository
+	ragRepo        repository.RAGRepository
+	retrievePipe   *RetrievePipeline
+	chatModel      model.BaseChatModel
+	chatMeta       ChatModelMeta
+	toolDispatcher ToolDispatcher
+	r              compose.Runnable[*AssistantRequest, *AssistantResult]
 }
 
 // ChatModelMeta ChatModel元数据
@@ -70,19 +90,21 @@ func NewAssistantPipeline(
 	retrievePipe *RetrievePipeline,
 	chatModel model.BaseChatModel,
 	chatMeta ChatModelMeta,
+	toolDispatcher ToolDispatcher,
 ) (*AssistantPipeline, error) {
 	if sessionRepo == nil || messageRepo == nil || ragRepo == nil || retrievePipe == nil || chatModel == nil {
 		return nil, fmt.Errorf("required dependencies are nil")
 	}
 
 	p := &AssistantPipeline{
-		sessionRepo:  sessionRepo,
-		messageRepo:  messageRepo,
-		agentRepo:    agentRepo,
-		ragRepo:      ragRepo,
-		retrievePipe: retrievePipe,
-		chatModel:    chatModel,
-		chatMeta:     chatMeta,
+		sessionRepo:    sessionRepo,
+		messageRepo:    messageRepo,
+		agentRepo:      agentRepo,
+		ragRepo:        ragRepo,
+		retrievePipe:   retrievePipe,
+		chatModel:      chatModel,
+		chatMeta:       chatMeta,
+		toolDispatcher: toolDispatcher,
 	}
 
 	// 构建Eino Graph
@@ -93,6 +115,10 @@ func NewAssistantPipeline(
 	p.r = r
 
 	return p, nil
+}
+
+func (p *AssistantPipeline) SetToolDispatcher(dispatcher ToolDispatcher) {
+	p.toolDispatcher = dispatcher
 }
 
 // Execute 执行Assistant Pipeline（非流式）
