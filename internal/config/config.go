@@ -85,6 +85,26 @@ type AIConfig struct {
 	ChatModel AIChatModelConfig `toml:"chatModel"`
 }
 
+// MCPBuiltinServerConfig 内置 MCP Server 配置
+type MCPBuiltinServerConfig struct {
+	Enabled            bool   `toml:"enabled"`
+	Name               string `toml:"name"`
+	Version            string `toml:"version"`
+	Description        string `toml:"description"`
+	EnableContactTools bool   `toml:"enableContactTools"`
+	EnableGroupTools   bool   `toml:"enableGroupTools"`
+	EnableMessageTools bool   `toml:"enableMessageTools"`
+	EnableSessionTools bool   `toml:"enableSessionTools"`
+}
+
+// MCPConfig MCP 配置
+type MCPConfig struct {
+	Enabled                  bool                   `toml:"enabled"`
+	ToolCallTimeoutSeconds   int                    `toml:"toolCallTimeoutSeconds"`
+	ServerInitTimeoutSeconds int                    `toml:"serverInitTimeoutSeconds"`
+	BuiltinServer            MCPBuiltinServerConfig `toml:"builtinServer"`
+}
+
 type Config struct {
 	MainConfig   `toml:"mainConfig"`
 	MysqlConfig  `toml:"mysqlConfig"`
@@ -93,6 +113,7 @@ type Config struct {
 	KafkaConfig  `toml:"kafkaConfig"`
 	AIConfig     `toml:"aiConfig"`
 	LogConfig    `toml:"logConfig"`
+	MCPConfig    `toml:"mcpConfig"`
 }
 
 var config *Config

@@ -46,3 +46,18 @@ metricType = "COSINE"
   model = ""        # 填入火山引擎接入点 ID (ep-xxx)
   timeoutSeconds = 120
   retryTimes = 2
+
+[mcpConfig]
+  enabled = true
+  toolCallTimeoutSeconds = 30
+  serverInitTimeoutSeconds = 10
+  
+  [mcpConfig.builtinServer]
+    enabled = true
+    name = "omnilink-internal"
+    version = "1.0.0"
+    description = "OmniLink 内置能力封装 (好友、群、消息查询)"
+    enableContactTools = true
+    enableGroupTools = true
+    enableMessageTools = true
+    enableSessionTools = true

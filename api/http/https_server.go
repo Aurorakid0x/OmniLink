@@ -19,6 +19,12 @@ import (
 	aiTransform "OmniLink/internal/modules/ai/infrastructure/transform"
 	aiVectordb "OmniLink/internal/modules/ai/infrastructure/vectordb"
 	aiHTTP "OmniLink/internal/modules/ai/interface/http"
+
+	// MCP Imports
+	mcpRegistry "OmniLink/internal/modules/ai/infrastructure/mcp/registry"
+	mcpServer "OmniLink/internal/modules/ai/infrastructure/mcp/server"
+	mcpHandlers "OmniLink/internal/modules/ai/infrastructure/mcp/server/handlers"
+
 	chatService "OmniLink/internal/modules/chat/application/service"
 	chatPersistence "OmniLink/internal/modules/chat/infrastructure/persistence"
 	chatHandler "OmniLink/internal/modules/chat/interface/http"
@@ -180,6 +186,41 @@ func init() {
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
 	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, aiAsyncIngest)
+
+	// MCP Initialization
+	var mcpDispatcher aiService.MCPDispatcher
+	_ = mcpDispatcher
+	if conf.MCPConfig.Enabled {
+		zlog.Info("Initializing MCP components...")
+
+		// 1. 创建 Registry
+		serverRegistry := mcpRegistry.NewServerRegistry()
+
+		// 2. 创建并注册内置 Server
+		if conf.MCPConfig.BuiltinServer.Enabled {
+			builtinServer := mcpServer.NewBuiltinMCPServer(
+				conf.MCPConfig.BuiltinServer.Name,
+				conf.MCPConfig.BuiltinServer.Version,
+				conf.MCPConfig.BuiltinServer.Description,
+			)
+
+			// 注册工具
+			if conf.MCPConfig.BuiltinServer.EnableContactTools {
+				contactHandler := mcpHandlers.NewContactToolHandler(contactSvc)
+				builtinServer.RegisterTools(contactHandler.RegisterTools())
+			}
+			// TODO: Register Group/Message tools
+
+			if err := serverRegistry.RegisterBuiltinServer(builtinServer.GetServerInfo().Name, builtinServer, 100); err != nil {
+				zlog.Error("Failed to register builtin MCP server: " + err.Error())
+			}
+		}
+
+		// 3. 创建 Dispatcher
+		mcpDispatcher = aiService.NewMCPDispatcher(serverRegistry, conf.MCPConfig.ToolCallTimeoutSeconds)
+		zlog.Info("MCP initialization completed")
+	}
+
 	userH := userHandler.NewUserInfoHandler(userSvc)
 	contactH := contactHandler.NewContactHandler(contactSvc, wsHub)
 	groupH := contactHandler.NewGroupHandler(groupSvc)
