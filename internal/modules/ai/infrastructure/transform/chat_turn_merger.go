@@ -80,11 +80,17 @@ func (m *ChatTurnMerger) Merge(messages []entity.Message) []string {
 			}
 
 			timeStr := msg.CreatedAt.Format("15:04:05")
-			receiver := strings.TrimSpace(msg.ReceiveId)
-			if receiver == "" {
-				receiver = "unknown"
+			senderID := strings.TrimSpace(msg.SendId)
+			senderName := strings.TrimSpace(msg.SendName)
+			if senderName == "" {
+				senderName = senderID
 			}
-			line := fmt.Sprintf("%s->%s(%s): %s", msg.SendName, receiver, timeStr, content) //这里包含接收者
+			receiverID := strings.TrimSpace(msg.ReceiveId)
+			receiverName := receiverID
+			if receiverName == "" {
+				receiverName = "unknown"
+			}
+			line := fmt.Sprintf("%s[%s]->%s[%s](%s): %s", senderName, senderID, receiverName, receiverID, timeStr, content)
 			currentSegment.WriteString(line)
 
 			lastTime = msg.CreatedAt

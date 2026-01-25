@@ -153,7 +153,7 @@ func init() {
 						if err != nil {
 							zlog.Warn("ai assistant pipeline init failed: " + err.Error())
 						} else {
-							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline)
+							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, userRepo, assistantPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 						}
 					}
