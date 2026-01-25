@@ -8,6 +8,7 @@ import (
 
 	"OmniLink/internal/modules/ai/application/dto/respond"
 	"OmniLink/internal/modules/ai/domain/repository"
+	userRepository "OmniLink/internal/modules/user/domain/repository"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -50,6 +51,7 @@ type AssistantPipeline struct {
 	messageRepo  repository.AssistantMessageRepository
 	agentRepo    repository.AgentRepository
 	ragRepo      repository.RAGRepository
+	userRepo     userRepository.UserInfoRepository
 	retrievePipe *RetrievePipeline
 	chatModel    model.BaseChatModel
 	chatMeta     ChatModelMeta
@@ -69,6 +71,7 @@ func NewAssistantPipeline(
 	messageRepo repository.AssistantMessageRepository,
 	agentRepo repository.AgentRepository,
 	ragRepo repository.RAGRepository,
+	userRepo userRepository.UserInfoRepository,
 	retrievePipe *RetrievePipeline,
 	chatModel model.BaseChatModel,
 	chatMeta ChatModelMeta,
@@ -83,6 +86,7 @@ func NewAssistantPipeline(
 		messageRepo:  messageRepo,
 		agentRepo:    agentRepo,
 		ragRepo:      ragRepo,
+		userRepo:     userRepo,
 		retrievePipe: retrievePipe,
 		chatModel:    chatModel,
 		chatMeta:     chatMeta,

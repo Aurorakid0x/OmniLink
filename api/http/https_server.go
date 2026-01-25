@@ -142,6 +142,7 @@ func init() {
 							messageRepo,
 							agentRepo,
 							ragRepo,
+							userRepo,
 							retrievePipeline,
 							chatModel,
 							aiPipeline.ChatModelMeta{
@@ -153,7 +154,7 @@ func init() {
 						if err != nil {
 							zlog.Warn("ai assistant pipeline init failed: " + err.Error())
 						} else {
-							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, userRepo, assistantPipeline)
+							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 						}
 					}

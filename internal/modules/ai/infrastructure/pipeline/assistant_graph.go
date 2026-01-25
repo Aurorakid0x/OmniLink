@@ -186,7 +186,26 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 		return st, nil
 	}
 
-	promptMsgs := make([]schema.Message, 0, 1+len(st.Messages)+2)
+	promptMsgs := make([]schema.Message, 0, 2+len(st.Messages)+2)
+
+	userName := ""
+	if p.userRepo != nil {
+		briefs, err := p.userRepo.GetUserBriefByUUIDs([]string{st.Req.TenantUserID})
+		if err == nil && len(briefs) > 0 {
+			name := strings.TrimSpace(briefs[0].Nickname)
+			if name == "" {
+				name = strings.TrimSpace(briefs[0].Username)
+			}
+			userName = name
+		}
+	}
+	if userName == "" {
+		userName = st.Req.TenantUserID
+	}
+	promptMsgs = append(promptMsgs, schema.Message{
+		Role: schema.System,
+		Content: fmt.Sprintf("### 用户上下文\n用户ID: %s\n用户名称: %s\n你可以使用以上已提供的用户信息来回答与该用户相关的问题，但不得臆造未提供的信息。", st.Req.TenantUserID, userName),
+	})
 
 	personaPrompt := defaultPersonaPrompt
 	agentID := strings.TrimSpace(st.Req.AgentID)
@@ -197,14 +216,14 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 			return st, nil
 		}
 		if ag != nil {
+			systemPrompt := strings.TrimSpace(ag.SystemPrompt)
 			persona := strings.TrimSpace(ag.PersonaPrompt)
 			desc := strings.TrimSpace(ag.Description)
-			if persona != "" && desc != "" {
-				personaPrompt = fmt.Sprintf("%s\n%s\n%s", personaPrompt, persona, desc)
-			} else if persona != "" {
-				personaPrompt = fmt.Sprintf("%s\n%s", personaPrompt, persona)
-			} else if desc != "" {
-				personaPrompt = fmt.Sprintf("%s\n%s", personaPrompt, desc)
+			if systemPrompt != "" {
+				personaPrompt = fmt.Sprintf("%s\n[System Prompt]\n%s", personaPrompt, systemPrompt)
+			}
+			if persona != "" || desc != "" {
+				personaPrompt = fmt.Sprintf("%s\n[User Persona]\n%s", personaPrompt, strings.TrimSpace(strings.Join([]string{persona, desc}, "\n")))
 			}
 		}
 	}
@@ -233,7 +252,7 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 		contextStr := buildContextString(st.RetrievedCtx)
 		promptMsgs = append(promptMsgs, schema.Message{
 			Role:    schema.System,
-			Content: fmt.Sprintf("以下是检索到的相关上下文信息（请基于这些信息回答）：\n%s", contextStr),
+			Content: fmt.Sprintf("以下是检索到的相关上下文信息：\n%s", contextStr),
 		})
 	}
 
@@ -260,11 +279,26 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 		st.Tools = toolInfos
 	}
 
+	promptJSON := ""
+	if b, err := json.Marshal(promptMsgs); err == nil {
+		promptJSON = string(b)
+	} else {
+		promptJSON = fmt.Sprintf("marshal_prompt_error:%v", err)
+	}
+	toolsJSON := ""
+	if b, err := json.Marshal(st.Tools); err == nil {
+		toolsJSON = string(b)
+	} else {
+		toolsJSON = fmt.Sprintf("marshal_tools_error:%v", err)
+	}
+
 	zlog.Info("assistant build prompt done",
 		zap.String("query_id", st.QueryID),
 		zap.Int("prompt_msgs", len(promptMsgs)),
 		zap.Int("history_msgs", len(st.Messages)),
-		zap.Int("retrieved_chunks", len(st.RetrievedCtx)))
+		zap.Int("retrieved_chunks", len(st.RetrievedCtx)),
+		zap.String("prompt", promptJSON),
+		zap.String("tools", toolsJSON))
 
 	return st, nil
 }
