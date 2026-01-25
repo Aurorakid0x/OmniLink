@@ -148,6 +148,56 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 		promptMsgs[i] = &st.PromptMsgs[i]
 	}
 
+	if len(p.tools) > 0 {
+		resp, err := p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if len(resp.ToolCalls) > 0 {
+			st.PromptMsgs = append(st.PromptMsgs, *resp)
+			for _, toolCall := range resp.ToolCalls {
+				toolName := toolCall.Function.Name
+				toolArgs := toolCall.Function.Arguments
+
+				var toolResp string
+				var found bool
+				for _, t := range p.tools {
+					info, _ := t.Info(ctx)
+					if info != nil && info.Name == toolName {
+						found = true
+						if invokable, ok := t.(tool.InvokableTool); ok {
+							res, err := invokable.InvokableRun(ctx, toolArgs)
+							if err != nil {
+								toolResp = fmt.Sprintf("Tool execution error: %v", err)
+							} else {
+								toolResp = res
+							}
+						} else {
+							toolResp = "Tool is not invokable"
+						}
+						break
+					}
+				}
+				if !found {
+					toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
+				}
+
+				toolCallID := toolCall.ID
+				if toolCallID == "" {
+					toolCallID = toolName
+				}
+
+				st.PromptMsgs = append(st.PromptMsgs, *schema.ToolMessage(toolResp, toolCallID, schema.WithToolName(toolName)))
+			}
+
+			promptMsgs = make([]*schema.Message, len(st.PromptMsgs))
+			for i := range st.PromptMsgs {
+				promptMsgs[i] = &st.PromptMsgs[i]
+			}
+		}
+	}
+
 	streamReader, err := p.chatModel.Stream(ctx, promptMsgs)
 	if err != nil {
 		return nil, nil, err

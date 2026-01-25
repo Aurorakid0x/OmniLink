@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"OmniLink/pkg/zlog"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.uber.org/zap"
 
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
+	contactRespond "OmniLink/internal/modules/contact/application/dto/respond"
 	contactService "OmniLink/internal/modules/contact/application/service"
 )
 
@@ -43,21 +47,28 @@ func (h *ContactToolHandler) handleListFriends(ctx context.Context, request mcp.
 
 	// mcp-go server 接收到的 Arguments 通常是 map[string]interface{}
 	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("contact_list_friends invalid arguments type")
 		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
 	}
 
 	tenantUserID, ok := args["tenant_user_id"].(string)
 	if !ok || strings.TrimSpace(tenantUserID) == "" {
+		zlog.Error("contact_list_friends missing tenant_user_id")
 		return mcp.NewToolResultError("tenant_user_id is required"), nil
 	}
+
+	zlog.Info("contact_list_friends start", zap.String("tenant_user_id", tenantUserID))
 
 	// 2. 调用 ContactService 获取好友列表
 	friends, err := h.contactSvc.GetUserList(contactRequest.GetUserListRequest{
 		OwnerId: tenantUserID,
 	})
 	if err != nil {
+		zlog.Error("contact_list_friends query failed", zap.Error(err), zap.String("tenant_user_id", tenantUserID))
 		return mcp.NewToolResultError(fmt.Sprintf("查询好友列表失败：%v", err)), nil
 	}
+
+	zlog.Info("contact_list_friends result", zap.String("tenant_user_id", tenantUserID), zap.Any("friends", friends))
 
 	// 3. 转换为人类可读文本
 	textContent := h.formatFriendsAsText(friends, tenantUserID)
@@ -68,12 +79,33 @@ func (h *ContactToolHandler) handleListFriends(ctx context.Context, request mcp.
 
 // formatFriendsAsText 将好友列表格式化为文本
 func (h *ContactToolHandler) formatFriendsAsText(friends interface{}, tenantUserID string) string {
-	// ... (保持原有逻辑不变)
-	// 类型断言
+	switch list := friends.(type) {
+	case []contactRespond.UserListItem:
+		if len(list) == 0 {
+			return "您当前还没有添加任何好友。"
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("找到 %d 位好友：\n", len(list)))
+		for i := range list {
+			statusText := "离线"
+			if list[i].Status == 0 {
+				statusText = "在线"
+			}
+			sb.WriteString(fmt.Sprintf("%d. %s (ID: %s) - %s\n", i+1, list[i].UserName, list[i].UserId, statusText))
+		}
+		return sb.String()
+	}
+
 	friendList, ok := friends.([]interface{})
 	if !ok {
-		// 尝试其他类型
-		return fmt.Sprintf("找到好友列表，共 %d 位好友", 0)
+		if list, ok := friends.([]map[string]interface{}); ok {
+			friendList = make([]interface{}, 0, len(list))
+			for i := range list {
+				friendList = append(friendList, list[i])
+			}
+		} else {
+			return "找到好友列表，但无法解析返回格式。"
+		}
 	}
 
 	if len(friendList) == 0 {
@@ -89,12 +121,32 @@ func (h *ContactToolHandler) formatFriendsAsText(friends interface{}, tenantUser
 			continue
 		}
 
-		userName, _ := friendMap["UserName"].(string)
-		userId, _ := friendMap["UserId"].(string)
-		status, _ := friendMap["Status"].(int8)
+		userName := ""
+		if v, ok := friendMap["user_name"].(string); ok {
+			userName = v
+		}
+		userId := ""
+		if v, ok := friendMap["user_id"].(string); ok {
+			userId = v
+		}
+		statusVal := int64(1)
+		if v, ok := friendMap["status"]; ok {
+			switch s := v.(type) {
+			case int:
+				statusVal = int64(s)
+			case int8:
+				statusVal = int64(s)
+			case int32:
+				statusVal = int64(s)
+			case int64:
+				statusVal = s
+			case float64:
+				statusVal = int64(s)
+			}
+		}
 
 		statusText := "离线"
-		if status == 0 {
+		if statusVal == 0 {
 			statusText = "在线"
 		}
 

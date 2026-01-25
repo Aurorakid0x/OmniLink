@@ -365,11 +365,12 @@ func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantStat
 				toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
 			}
 
-			st.PromptMsgs = append(st.PromptMsgs, schema.Message{
-				Role:      schema.Tool,
-				ToolCalls: []schema.ToolCall{toolCall}, // 关联 ToolCall
-				Content:   toolResp,
-			})
+			toolCallID := toolCall.ID
+			if toolCallID == "" {
+				toolCallID = toolName
+			}
+
+			st.PromptMsgs = append(st.PromptMsgs, *schema.ToolMessage(toolResp, toolCallID, schema.WithToolName(toolName)))
 		}
 
 		promptMsgs = make([]*schema.Message, len(st.PromptMsgs))
