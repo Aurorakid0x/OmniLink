@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/compose"
 )
 
@@ -51,11 +50,9 @@ type RetrieveResult struct {
 // 3. 权限隔离内建：过滤表达式必须包含 tenant_user_id
 // 4. 观测优先：记录 query_id、各阶段耗时、命中 chunk_id 列表
 type RetrievePipeline struct {
-	repo      repository.RAGRepository                            // RAG 仓储（用于获取 KB ID）
-	vs        repository.VectorStore                              // 向量存储（用于检索）
-	embedder  embedding.Embedder                                  // Embedder（用于 Query 向量化）
-	vectorDim int                                                 // 向量维度（用于校验）
-	r         compose.Runnable[*RetrieveRequest, *RetrieveResult] // Eino Runnable
+	repo repository.RAGRepository                            // RAG 仓储（用于获取 KB ID）
+	vs   repository.VectorStore                              // 向量存储（用于检索）
+	r    compose.Runnable[*RetrieveRequest, *RetrieveResult] // Eino Runnable
 }
 
 // NewRetrievePipeline 创建 RAG 召回 Pipeline
@@ -63,13 +60,9 @@ type RetrievePipeline struct {
 // 参数：
 //   - repo: RAG 仓储接口
 //   - vs: 向量存储接口
-//   - embedder: Embedder 接口
-//   - vectorDim: 向量维度（必须与 Milvus collection 一致）
 func NewRetrievePipeline(
 	repo repository.RAGRepository,
 	vs repository.VectorStore,
-	embedder embedding.Embedder,
-	vectorDim int,
 ) (*RetrievePipeline, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("rag repository is nil")
@@ -77,17 +70,9 @@ func NewRetrievePipeline(
 	if vs == nil {
 		return nil, fmt.Errorf("vector store is nil")
 	}
-	if embedder == nil {
-		return nil, fmt.Errorf("embedder is nil")
-	}
-	if vectorDim <= 0 {
-		return nil, fmt.Errorf("invalid vectorDim: %d", vectorDim)
-	}
 	p := &RetrievePipeline{
-		repo:      repo,
-		vs:        vs,
-		embedder:  embedder,
-		vectorDim: vectorDim,
+		repo: repo,
+		vs:   vs,
 	}
 	// 构建 Eino Graph
 	r, err := p.buildGraph(context.Background())

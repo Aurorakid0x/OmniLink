@@ -20,13 +20,11 @@ import (
 type retrieveState struct {
 	Req           *RetrieveRequest             // 原始请求
 	KBID          int64                        // 知识库 ID
-	QueryVec      []float32                    // Query 向量
 	FilterExpr    string                       // Milvus 过滤表达式
 	Hits          []repository.VectorSearchHit // 向量库原始命中
 	FilteredHits  []repository.VectorSearchHit // 过滤后的命中
 	Chunks        []respond.RAGChunkHit        // 最终返回的 chunks
 	Start         time.Time                    // 开始时间
-	EmbeddingMs   int64                        // 向量化耗时
 	SearchMs      int64                        // 检索耗时
 	PostProcessMs int64                        // 后处理耗时
 	Err           error                        // 错误（如果有）
@@ -34,11 +32,10 @@ type retrieveState struct {
 
 // buildGraph 构建 RAG 召回 Pipeline 的 Eino Graph
 //
-// 节点顺序：Validate → EmbedQuery → SearchVector → PostProcess → BuildResult
+// 节点顺序：Validate → SearchVector → PostProcess → BuildResult
 func (p *RetrievePipeline) buildGraph(ctx context.Context) (compose.Runnable[*RetrieveRequest, *RetrieveResult], error) {
 	const (
 		Validate     = "Validate"
-		EmbedQuery   = "EmbedQuery"
 		SearchVector = "SearchVector"
 		PostProcess  = "PostProcess"
 		BuildResult  = "BuildResult"
@@ -46,14 +43,12 @@ func (p *RetrievePipeline) buildGraph(ctx context.Context) (compose.Runnable[*Re
 	g := compose.NewGraph[*RetrieveRequest, *RetrieveResult]()
 	// 添加节点
 	_ = g.AddLambdaNode(Validate, compose.InvokableLambdaWithOption(p.validateNode), compose.WithNodeName(Validate))
-	_ = g.AddLambdaNode(EmbedQuery, compose.InvokableLambdaWithOption(p.embedQueryNode), compose.WithNodeName(EmbedQuery))
 	_ = g.AddLambdaNode(SearchVector, compose.InvokableLambdaWithOption(p.searchVectorNode), compose.WithNodeName(SearchVector))
 	_ = g.AddLambdaNode(PostProcess, compose.InvokableLambdaWithOption(p.postProcessNode), compose.WithNodeName(PostProcess))
 	_ = g.AddLambdaNode(BuildResult, compose.InvokableLambdaWithOption(p.buildResultNode), compose.WithNodeName(BuildResult))
 	// 添加边（定义节点顺序）
 	_ = g.AddEdge(compose.START, Validate)
-	_ = g.AddEdge(Validate, EmbedQuery)
-	_ = g.AddEdge(EmbedQuery, SearchVector)
+	_ = g.AddEdge(Validate, SearchVector)
 	_ = g.AddEdge(SearchVector, PostProcess)
 	_ = g.AddEdge(PostProcess, BuildResult)
 	_ = g.AddEdge(BuildResult, compose.END)
@@ -113,45 +108,7 @@ func (p *RetrievePipeline) validateNode(ctx context.Context, req *RetrieveReques
 	return st, nil
 }
 
-// embedQueryNode 节点 2：将用户问题向量化
-func (p *RetrievePipeline) embedQueryNode(ctx context.Context, st *retrieveState, _ ...any) (*retrieveState, error) {
-	if st == nil {
-		return &retrieveState{Err: fmt.Errorf("nil state"), Start: time.Now()}, nil
-	}
-	if st.Err != nil {
-		return st, nil
-	}
-	if st.Req == nil {
-		st.Err = fmt.Errorf("nil request")
-		return st, nil
-	}
-	embStart := time.Now()
-	// 调用 Embedder 对 question 进行向量化
-	vecs, err := p.embedder.EmbedStrings(ctx, []string{st.Req.Question})
-	if err != nil {
-		st.Err = err
-		return st, nil
-	}
-	if len(vecs) == 0 {
-		st.Err = fmt.Errorf("embedding result is empty")
-		return st, nil
-	}
-	vec64 := vecs[0]
-	if len(vec64) != p.vectorDim {
-		st.Err = fmt.Errorf("embedding dim mismatch: got=%d want=%d", len(vec64), p.vectorDim)
-		return st, nil
-	}
-	// 转换为 float32（Milvus 需要 float32）
-	vec32 := make([]float32, len(vec64))
-	for i := range vec64 {
-		vec32[i] = float32(vec64[i])
-	}
-	st.QueryVec = vec32
-	st.EmbeddingMs = time.Since(embStart).Milliseconds()
-	return st, nil
-}
-
-// searchVectorNode 节点 3：执行向量检索
+// searchVectorNode 节点 2：执行向量检索
 func (p *RetrievePipeline) searchVectorNode(ctx context.Context, st *retrieveState, _ ...any) (*retrieveState, error) {
 	if st == nil {
 		return &retrieveState{Err: fmt.Errorf("nil state"), Start: time.Now()}, nil
@@ -163,13 +120,10 @@ func (p *RetrievePipeline) searchVectorNode(ctx context.Context, st *retrieveSta
 		st.Err = fmt.Errorf("nil request")
 		return st, nil
 	}
-	if len(st.QueryVec) == 0 {
-		st.Err = fmt.Errorf("query vector is empty")
-		return st, nil
-	}
+
 	searchStart := time.Now()
-	// 调用 VectorStore.Search 执行向量检索
-	hits, err := p.vs.Search(ctx, st.QueryVec, st.Req.TopK, st.FilterExpr)
+	// 调用 VectorStore.Retrieve 执行文本检索 (Eino 内置 Embedding)
+	hits, err := p.vs.Retrieve(ctx, st.Req.Question, st.Req.TopK, st.FilterExpr)
 	if err != nil {
 		st.Err = err
 		return st, nil
@@ -179,7 +133,7 @@ func (p *RetrievePipeline) searchVectorNode(ctx context.Context, st *retrieveSta
 	return st, nil
 }
 
-// postProcessNode 节点 4：后处理（去重、过滤、排序、截断）
+// postProcessNode 节点 3：后处理（去重、过滤、排序、截断）
 func (p *RetrievePipeline) postProcessNode(ctx context.Context, st *retrieveState, _ ...any) (*retrieveState, error) {
 	_ = ctx
 	if st == nil {
@@ -251,7 +205,7 @@ func (p *RetrievePipeline) postProcessNode(ctx context.Context, st *retrieveStat
 	return st, nil
 }
 
-// buildResultNode 节点 5：组装最终响应结构
+// buildResultNode 节点 4：组装最终响应结构
 func (p *RetrievePipeline) buildResultNode(ctx context.Context, st *retrieveState, _ ...any) (*RetrieveResult, error) {
 	_ = ctx
 	if st == nil {
@@ -266,7 +220,6 @@ func (p *RetrievePipeline) buildResultNode(ctx context.Context, st *retrieveStat
 	res.QueryID = fmt.Sprintf("q_%s_%d", util.GenerateID("Q"), time.Now().UnixNano())
 	res.TotalHits = len(st.Hits)
 	res.ReturnedCount = len(st.FilteredHits)
-	res.EmbeddingMs = st.EmbeddingMs
 	res.SearchMs = st.SearchMs
 	res.PostProcessMs = st.PostProcessMs
 	res.DurationMs = time.Since(st.Start).Milliseconds()
@@ -310,7 +263,8 @@ func (p *RetrievePipeline) buildResultNode(ctx context.Context, st *retrieveStat
 		zap.Int("total_hits", res.TotalHits),
 		zap.Int("returned_count", res.ReturnedCount),
 		zap.String("chunk_ids", strings.Join(chunkIDs, ",")),
-		zap.Int64("embedding_ms", res.EmbeddingMs),
+		// Embedding time is now inside SearchMs or effectively implicit in Eino
+		// zap.Int64("embedding_ms", res.EmbeddingMs),
 		zap.Int64("search_ms", res.SearchMs),
 		zap.Int64("post_process_ms", res.PostProcessMs),
 		zap.Int64("duration_ms", res.DurationMs),

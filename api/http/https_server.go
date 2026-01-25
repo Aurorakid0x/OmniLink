@@ -44,7 +44,6 @@ import (
 
 	cors "github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 )
 
 var GE *gin.Engine
@@ -72,114 +71,108 @@ func init() {
 	var assistantPipeline *aiPipeline.AssistantPipeline
 	var aiAsyncIngest aiService.AsyncIngestService
 	if initial.MilvusClient != nil {
-		metric := entity.COSINE
-		switch strings.ToUpper(strings.TrimSpace(conf.MilvusConfig.MetricType)) {
-		case "L2":
-			metric = entity.L2
-		case "IP":
-			metric = entity.IP
-		case "COSINE", "":
-			metric = entity.COSINE
-		}
-		store, err := aiVectordb.NewMilvusStore(initial.MilvusClient, strings.TrimSpace(conf.MilvusConfig.CollectionName), "vector", conf.MilvusConfig.VectorDim, metric)
+		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
-			zlog.Warn("ai milvus store init failed: " + err.Error())
+			zlog.Warn("ai embedder init failed: " + err.Error() + "; fallback to mock")
+			embedder = aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
+			embMeta = aiEmbedding.EmbedderMeta{Provider: "mock", Model: "mock"}
+		}
+
+		vs, err := aiVectordb.NewMilvusImpl(context.Background(), initial.MilvusClient, aiVectordb.MilvusConfig{
+			Address:  conf.MilvusConfig.Address,
+			Username: conf.MilvusConfig.Username,
+			Password: conf.MilvusConfig.Password,
+			DBName:   conf.MilvusConfig.DBName,
+		}, embedder, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
+
+		if err != nil {
+			zlog.Warn("ai milvus vector store init failed: " + err.Error())
 		} else {
-			vs, err := aiVectordb.NewMilvusVectorStore(store)
+			ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
+			eventRepo := aiPersistence.NewIngestEventRepository(initial.GormDB)
+			jobRepo := aiPersistence.NewBackfillJobRepository(initial.GormDB)
+			pub, err := aiKafka.NewPublisher(conf.KafkaConfig.Brokers)
 			if err != nil {
-				zlog.Warn("ai milvus vector store init failed: " + err.Error())
+				zlog.Warn("ai kafka publisher init failed: " + err.Error())
 			} else {
-				ragRepo := aiPersistence.NewRAGRepository(initial.GormDB)
-				eventRepo := aiPersistence.NewIngestEventRepository(initial.GormDB)
-				jobRepo := aiPersistence.NewBackfillJobRepository(initial.GormDB)
-				pub, err := aiKafka.NewPublisher(conf.KafkaConfig.Brokers)
+				_ = aiKafka.EnsureTopic(aiKafka.TopicAdminConfig{
+					Brokers:  conf.KafkaConfig.Brokers,
+					ClientID: conf.KafkaConfig.ClientID,
+				}, strings.TrimSpace(conf.KafkaConfig.IngestTopic), conf.KafkaConfig.Partitions, conf.KafkaConfig.Replication)
+				relay := aiQueue.NewOutboxRelay(eventRepo, jobRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
+				go func() {
+					if err := relay.Run(context.Background()); err != nil {
+						zlog.Warn("ai outbox relay stopped: " + err.Error())
+					}
+				}()
+			}
+			chatReader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
+			selfReader := aiReader.NewSelfProfileReader(userRepo)
+			contactReader := aiReader.NewContactProfileReader(contactRepo, userRepo)
+			groupReader := aiReader.NewGroupProfileReader(groupRepo, contactRepo, userRepo)
+			chunker := aiChunking.NewRecursiveChunker(800, 120)
+			merger := aiTransform.NewChatTurnMerger()
+
+			p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, embMeta.Provider, embMeta.Model, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
+			if err != nil {
+				zlog.Warn("ai ingest pipeline init failed: " + err.Error())
+			} else {
+				ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, jobRepo, eventRepo)
+				aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
+				aiAsyncIngest = aiService.NewAsyncIngestService(eventRepo)
+				// RAG 召回 Pipeline & Service & Handler
+				retrievePipeline, err := aiPipeline.NewRetrievePipeline(ragRepo, vs)
 				if err != nil {
-					zlog.Warn("ai kafka publisher init failed: " + err.Error())
+					zlog.Warn("ai retrieve pipeline init failed: " + err.Error())
 				} else {
-					_ = aiKafka.EnsureTopic(aiKafka.TopicAdminConfig{
-						Brokers:  conf.KafkaConfig.Brokers,
-						ClientID: conf.KafkaConfig.ClientID,
-					}, strings.TrimSpace(conf.KafkaConfig.IngestTopic), conf.KafkaConfig.Partitions, conf.KafkaConfig.Replication)
-					relay := aiQueue.NewOutboxRelay(eventRepo, jobRepo, pub, strings.TrimSpace(conf.KafkaConfig.IngestTopic), 200, 500*time.Millisecond)
+					retrieveSvc := aiService.NewRetrieveService(retrievePipeline)
+					aiQueryH = aiHTTP.NewQueryHandler(retrieveSvc)
+
+					// AI Assistant Pipeline & Service & Handler
+					chatModel, chatMeta, err := aiLLM.NewChatModelFromConfig(context.Background(), conf)
+					if err != nil {
+						zlog.Warn("ai chat model init failed: " + err.Error())
+					} else {
+						sessionRepo := aiPersistence.NewAssistantSessionRepository(initial.GormDB)
+						messageRepo := aiPersistence.NewAssistantMessageRepository(initial.GormDB)
+						agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
+
+						assistantPipeline, err = aiPipeline.NewAssistantPipeline(
+							sessionRepo,
+							messageRepo,
+							agentRepo,
+							ragRepo,
+							retrievePipeline,
+							chatModel,
+							aiPipeline.ChatModelMeta{
+								Provider: chatMeta.Provider,
+								Model:    chatMeta.Model,
+							},
+							nil,
+						)
+						if err != nil {
+							zlog.Warn("ai assistant pipeline init failed: " + err.Error())
+						} else {
+							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, assistantPipeline)
+							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
+						}
+					}
+				}
+				consumer, err := aiKafka.NewConsumer(aiKafka.ConsumerConfig{
+					Brokers:  conf.KafkaConfig.Brokers,
+					GroupID:  strings.TrimSpace(conf.KafkaConfig.ConsumerGroupID),
+					Topics:   []string{strings.TrimSpace(conf.KafkaConfig.IngestTopic)},
+					ClientID: conf.KafkaConfig.ClientID,
+				})
+				if err != nil {
+					zlog.Warn("ai kafka consumer init failed: " + err.Error())
+				} else {
+					worker := aiQueue.NewIngestConsumerWorker(consumer, eventRepo, jobRepo, chatReader, selfReader, contactReader, groupReader, p)
 					go func() {
-						if err := relay.Run(context.Background()); err != nil {
-							zlog.Warn("ai outbox relay stopped: " + err.Error())
+						if err := worker.Run(context.Background()); err != nil {
+							zlog.Warn("ai ingest consumer stopped: " + err.Error())
 						}
 					}()
-				}
-				chatReader := aiReader.NewChatSessionReader(sessionRepo, messageRepo)
-				selfReader := aiReader.NewSelfProfileReader(userRepo)
-				contactReader := aiReader.NewContactProfileReader(contactRepo, userRepo)
-				groupReader := aiReader.NewGroupProfileReader(groupRepo, contactRepo, userRepo)
-				chunker := aiChunking.NewRecursiveChunker(800, 120)
-				merger := aiTransform.NewChatTurnMerger()
-				embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
-				if err != nil {
-					zlog.Warn("ai embedder init failed: " + err.Error() + "; fallback to mock")
-					embedder = aiEmbedding.NewMockEmbedder(conf.MilvusConfig.VectorDim)
-					embMeta = aiEmbedding.EmbedderMeta{Provider: "mock", Model: "mock"}
-				}
-				p, err := aiPipeline.NewIngestPipeline(ragRepo, vs, embedder, embMeta.Provider, embMeta.Model, merger, chunker, strings.TrimSpace(conf.MilvusConfig.CollectionName), conf.MilvusConfig.VectorDim)
-				if err != nil {
-					zlog.Warn("ai ingest pipeline init failed: " + err.Error())
-				} else {
-					ingestSvc := aiService.NewIngestService(chatReader, selfReader, contactReader, groupReader, jobRepo, eventRepo)
-					aiAdminH = aiHTTP.NewAdminHandler(ingestSvc)
-					aiAsyncIngest = aiService.NewAsyncIngestService(eventRepo)
-					// RAG 召回 Pipeline & Service & Handler
-					retrievePipeline, err := aiPipeline.NewRetrievePipeline(ragRepo, vs, embedder, conf.MilvusConfig.VectorDim)
-					if err != nil {
-						zlog.Warn("ai retrieve pipeline init failed: " + err.Error())
-					} else {
-						retrieveSvc := aiService.NewRetrieveService(retrievePipeline)
-						aiQueryH = aiHTTP.NewQueryHandler(retrieveSvc)
-
-						// AI Assistant Pipeline & Service & Handler
-						chatModel, chatMeta, err := aiLLM.NewChatModelFromConfig(context.Background(), conf)
-						if err != nil {
-							zlog.Warn("ai chat model init failed: " + err.Error())
-						} else {
-							sessionRepo := aiPersistence.NewAssistantSessionRepository(initial.GormDB)
-							messageRepo := aiPersistence.NewAssistantMessageRepository(initial.GormDB)
-							agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
-
-							assistantPipeline, err = aiPipeline.NewAssistantPipeline(
-								sessionRepo,
-								messageRepo,
-								agentRepo,
-								ragRepo,
-								retrievePipeline,
-								chatModel,
-								aiPipeline.ChatModelMeta{
-									Provider: chatMeta.Provider,
-									Model:    chatMeta.Model,
-								},
-								nil,
-							)
-							if err != nil {
-								zlog.Warn("ai assistant pipeline init failed: " + err.Error())
-							} else {
-								assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, assistantPipeline)
-								aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
-							}
-						}
-					}
-					consumer, err := aiKafka.NewConsumer(aiKafka.ConsumerConfig{
-						Brokers:  conf.KafkaConfig.Brokers,
-						GroupID:  strings.TrimSpace(conf.KafkaConfig.ConsumerGroupID),
-						Topics:   []string{strings.TrimSpace(conf.KafkaConfig.IngestTopic)},
-						ClientID: conf.KafkaConfig.ClientID,
-					})
-					if err != nil {
-						zlog.Warn("ai kafka consumer init failed: " + err.Error())
-					} else {
-						worker := aiQueue.NewIngestConsumerWorker(consumer, eventRepo, jobRepo, chatReader, selfReader, contactReader, groupReader, p)
-						go func() {
-							if err := worker.Run(context.Background()); err != nil {
-								zlog.Warn("ai ingest consumer stopped: " + err.Error())
-							}
-						}()
-					}
 				}
 			}
 		}

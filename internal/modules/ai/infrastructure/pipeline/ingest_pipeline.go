@@ -14,7 +14,6 @@ import (
 	"OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/internal/modules/ai/infrastructure/chunking"
 	"OmniLink/internal/modules/ai/infrastructure/transform"
-	"OmniLink/internal/modules/ai/infrastructure/vectordb"
 	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	"OmniLink/pkg/zlog"
 
@@ -51,10 +50,10 @@ type IngestResult struct {
 }
 
 type IngestPipeline struct {
-	repo       repository.RAGRepository
-	vs         repository.VectorStore
+	repo        repository.RAGRepository
+	vs          repository.VectorStore
 	einoIndexer indexer.Indexer
-	embedder   embedding.Embedder
+	embedder    embedding.Embedder
 
 	embeddingProvider string
 	embeddingModel    string
@@ -67,9 +66,11 @@ type IngestPipeline struct {
 }
 
 func NewIngestPipeline(repo repository.RAGRepository, vs repository.VectorStore, embedder embedding.Embedder, embeddingProvider, embeddingModel string, merger *transform.ChatTurnMerger, chunker *chunking.SimpleChunker, collection string, vectorDim int) (*IngestPipeline, error) {
-	einoIndexer, err := vectordb.NewEinoVectorStore(vs)
-	if err != nil {
-		return nil, err
+	var einoIndexer indexer.Indexer
+	if idx, ok := vs.(indexer.Indexer); ok {
+		einoIndexer = idx
+	} else {
+		return nil, fmt.Errorf("vector store must implement indexer.Indexer")
 	}
 	p := &IngestPipeline{repo: repo, vs: vs, einoIndexer: einoIndexer, embedder: embedder, embeddingProvider: strings.TrimSpace(embeddingProvider), embeddingModel: strings.TrimSpace(embeddingModel), merger: merger, chunker: chunker, collection: collection, vectorDim: vectorDim}
 	r, err := p.buildGraph(context.Background())

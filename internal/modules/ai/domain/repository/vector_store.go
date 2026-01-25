@@ -40,5 +40,8 @@ type VectorSearchHit struct {
 type VectorStore interface {
 	Upsert(ctx context.Context, items []VectorUpsertItem) ([]string, error)
 	DeleteByIDs(ctx context.Context, ids []string) error
+	// Search 按向量搜索 (Deprecated: use Retrieve)
 	Search(ctx context.Context, vector []float32, topK int, expr string) ([]VectorSearchHit, error)
+	// Retrieve 按文本搜索 (Eino Native)
+	Retrieve(ctx context.Context, query string, topK int, expr string) ([]VectorSearchHit, error)
 }
