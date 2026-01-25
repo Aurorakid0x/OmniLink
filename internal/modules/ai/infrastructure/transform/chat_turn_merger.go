@@ -79,10 +79,12 @@ func (m *ChatTurnMerger) Merge(messages []entity.Message) []string {
 				}
 			}
 
-			// 格式："发送者(时:分:秒): 内容"
-			// 例："张三(10:00:00): 你好"
 			timeStr := msg.CreatedAt.Format("15:04:05")
-			line := fmt.Sprintf("%s(%s): %s", msg.SendName, timeStr, content)
+			receiver := strings.TrimSpace(msg.ReceiveId)
+			if receiver == "" {
+				receiver = "unknown"
+			}
+			line := fmt.Sprintf("%s->%s(%s): %s", msg.SendName, receiver, timeStr, content) //这里包含接收者
 			currentSegment.WriteString(line)
 
 			lastTime = msg.CreatedAt
