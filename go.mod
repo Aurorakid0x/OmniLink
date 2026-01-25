@@ -8,6 +8,7 @@ require (
 	github.com/cloudwego/eino v0.7.13
 	github.com/cloudwego/eino-ext/components/document/transformer/splitter/recursive v0.0.0-20251011073417-75b93b87b8a9
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.8
+	github.com/cloudwego/eino-ext/components/retriever/milvus2 v0.0.0-20260122064704-d8be5ee82c09
 	github.com/cloudwego/eino-ext/components/tool/mcp v0.0.8
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
@@ -16,6 +17,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/milvus-io/milvus-sdk-go/v2 v2.4.2
+	github.com/milvus-io/milvus/client/v2 v2.6.1
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/unrolled/secure v1.17.0
 	go.uber.org/zap v1.27.1
@@ -29,8 +31,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cilium/ebpf v0.11.0 // indirect
-	github.com/cloudwego/eino-ext/components/indexer/milvus2 v0.0.0-20260122064704-d8be5ee82c09 // indirect
-	github.com/cloudwego/eino-ext/components/retriever/milvus2 v0.0.0-20260122064704-d8be5ee82c09 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.13 // indirect
 	github.com/containerd/cgroups/v3 v3.0.3 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
@@ -52,7 +52,6 @@ require (
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/meguminnnnnnnnn/go-openai v0.1.1 // indirect
-	github.com/milvus-io/milvus/client/v2 v2.6.1 // indirect
 	github.com/milvus-io/milvus/pkg/v2 v2.6.3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/runtime-spec v1.0.2 // indirect

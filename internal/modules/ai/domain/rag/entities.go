@@ -44,7 +44,7 @@ type AIKnowledgeBase struct {
 	OwnerType string    `gorm:"column:owner_type;type:varchar(20);not null;uniqueIndex:uniq_ai_kb_owner"` // 归属主体类型（例如 user/agent）
 	OwnerId   string    `gorm:"column:owner_id;type:char(20);not null;uniqueIndex:uniq_ai_kb_owner"`      // 归属主体 ID（例如用户 uuid）
 	KBType    string    `gorm:"column:kb_type;type:varchar(30);not null;uniqueIndex:uniq_ai_kb_owner"`    // 知识库类型（例如 global/agent_private）
-	Name      string    `gorm:"column:name;type:varchar(64);not null"`                                    // 知识库名称（展示用）
+	Name      string    `gorm:"column:name;type:varchar(64);not null"`                                    // 知识库名称（展示用）global知识库统一名字都为global
 	Status    int8      `gorm:"column:status;type:tinyint;not null;default:1"`                            // 状态：0=禁用，1=启用（见 CommonStatus*）
 	CreatedAt time.Time `gorm:"column:created_at;type:datetime;not null"`                                 // 创建时间
 	UpdatedAt time.Time `gorm:"column:updated_at;type:datetime;not null"`                                 // 更新时间

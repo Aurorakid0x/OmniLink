@@ -153,7 +153,7 @@ func init() {
 						if err != nil {
 							zlog.Warn("ai assistant pipeline init failed: " + err.Error())
 						} else {
-							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, assistantPipeline)
+							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 						}
 					}
@@ -278,6 +278,8 @@ func init() {
 		authed.GET("/ai/assistant/sessions", aiAssistantH.ListSessions)
 		authed.GET("/ai/assistant/sessions/:session_id/messages", aiAssistantH.GetSessionMessages)
 		authed.GET("/ai/assistant/agents", aiAssistantH.ListAgents)
+		authed.POST("/ai/assistant/agents", aiAssistantH.CreateAgent)
+		authed.POST("/ai/assistant/sessions", aiAssistantH.CreateSession)
 	}
 	authed.POST("/contact/getUserList", contactH.GetUserList)
 	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)

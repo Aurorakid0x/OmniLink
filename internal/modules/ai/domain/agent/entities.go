@@ -28,6 +28,7 @@ type AIAgent struct {
 	Name          string    `gorm:"column:name;type:varchar(64);not null"`              // Agent名称
 	Description   string    `gorm:"column:description;type:varchar(255)"`               // Agent描述
 	PersonaPrompt string    `gorm:"column:persona_prompt;type:mediumtext"`              // 人格化Prompt（系统人设）
+	SystemPrompt  string    `gorm:"column:system_prompt;type:mediumtext"`               // 系统Prompt（后端自动生成）
 	Status        int8      `gorm:"column:status;type:tinyint;not null;default:1"`      // 状态：1=enabled, 0=disabled
 	KBType        string    `gorm:"column:kb_type;type:varchar(30)"`                    // 知识库类型：global/agent_private
 	KBId          int64     `gorm:"column:kb_id;type:bigint"`                           // 关联的知识库ID

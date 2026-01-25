@@ -63,3 +63,21 @@ export const getAgents = () => {
 export const getSessionMessages = (sessionId, params = {}) => {
   return request.get(`/ai/assistant/sessions/${sessionId}/messages`, { params })
 }
+
+/**
+ * Create a new AI Agent
+ * @param {Object} data - { name, description, persona_prompt, kb_type, kb_name }
+ * @returns {Promise}
+ */
+export const createAgent = (data) => {
+  return request.post('/ai/assistant/agents', data)
+}
+
+/**
+ * Create a new Session
+ * @param {Object} data - { agent_id, title }
+ * @returns {Promise}
+ */
+export const createSession = (data) => {
+  return request.post('/ai/assistant/sessions', data)
+}

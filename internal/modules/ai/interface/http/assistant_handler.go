@@ -229,6 +229,60 @@ func (h *AssistantHandler) GetSessionMessages(c *gin.Context) {
 	back.Result(c, data, err)
 }
 
+// CreateAgent 创建Agent
+//
+// 路由: POST /ai/assistant/agents
+// 鉴权: 需要JWT
+// 请求体: CreateAgentRequest
+// 响应体: CreateAgentRespond
+func (h *AssistantHandler) CreateAgent(c *gin.Context) {
+	var req aiRequest.CreateAgentRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error("create agent bind error", zap.Error(err))
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	uuid := strings.TrimSpace(c.GetString("uuid"))
+	if uuid == "" {
+		back.Error(c, xerr.Unauthorized, "未登录")
+		return
+	}
+
+	data, err := h.svc.CreateAgent(c.Request.Context(), req, uuid)
+	if err != nil {
+		zlog.Error("create agent failed", zap.Error(err), zap.String("uuid", uuid))
+	}
+	back.Result(c, data, err)
+}
+
+// CreateSession 创建会话
+//
+// 路由: POST /ai/assistant/sessions
+// 鉴权: 需要JWT
+// 请求体: CreateSessionRequest
+// 响应体: CreateSessionRespond
+func (h *AssistantHandler) CreateSession(c *gin.Context) {
+	var req aiRequest.CreateSessionRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error("create session bind error", zap.Error(err))
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+
+	uuid := strings.TrimSpace(c.GetString("uuid"))
+	if uuid == "" {
+		back.Error(c, xerr.Unauthorized, "未登录")
+		return
+	}
+
+	data, err := h.svc.CreateSession(c.Request.Context(), req, uuid)
+	if err != nil {
+		zlog.Error("create session failed", zap.Error(err), zap.String("uuid", uuid))
+	}
+	back.Result(c, data, err)
+}
+
 // parsePositiveInt 解析正整数
 func parsePositiveInt(s string) (int, error) {
 	var n int
