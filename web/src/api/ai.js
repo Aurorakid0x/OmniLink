@@ -39,11 +39,20 @@ export const chatStream = async (data) => {
 }
 
 /**
- * Get user's AI assistant sessions
+ * Get system AI assistant session
  * @returns {Promise}
  */
-export const getSessions = () => {
-  return request.get('/ai/assistant/sessions')
+export const getSystemSession = () => {
+  return request.get('/ai/assistant/system-session')
+}
+
+/**
+ * Get user's AI assistant sessions (support filtering by type)
+ * @param {Object} params - { limit, offset, type }
+ * @returns {Promise}
+ */
+export const getSessions = (params = {}) => {
+  return request.get('/ai/assistant/sessions', { params })
 }
 
 /**

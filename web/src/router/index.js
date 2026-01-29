@@ -21,13 +21,8 @@ const routes = [
     name: 'Chat',
     component: () => import('../views/Chat.vue'),
     meta: { requiresAuth: true }
-  },
-  {
-    path: '/assistant',
-    name: 'Assistant',
-    component: () => import('../views/Assistant.vue'),
-    meta: { requiresAuth: true }
   }
+  // /assistant 路由已移除 - AI功能已整合到Chat主界面
 ]
 
 const router = createRouter({

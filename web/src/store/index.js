@@ -1,5 +1,6 @@
 import { createStore } from 'vuex'
 import { normalizeUrl, getUserSessionList, getGroupSessionList, getNewContactList } from '../api/im'
+import { getSystemSession, getSessions } from '../api/ai'
 import { normalizeSession, normalizeIncomingMessage } from '../utils/imNormalize'
 import { ElNotification } from 'element-plus'
 
@@ -48,6 +49,12 @@ export default createStore({
     sessionIdMap: {}, // peerId -> sessionId (用于快速查找)
     contactMap: {}, // peerId -> info (用户或群组的基本信息缓存)
     pendingApplyList: [], // 待处理好友申请
+    
+    // AI相关状态
+    systemAISession: null,        // 系统助手会话信息
+    aiSessions: [],               // AI会话列表
+    showAgentManage: false,       // 是否显示Agent管理弹窗
+    aiMessages: {},               // AI会话消息 { sessionId: [messages] }
   },
   getters: {
     isAuthenticated: state => !!state.token,
@@ -58,7 +65,13 @@ export default createStore({
     totalUnread: state => {
         return Object.values(state.unreadMap).reduce((a, b) => a + b, 0)
     },
-    pendingApplyCount: state => state.pendingApplyList.length
+    pendingApplyCount: state => state.pendingApplyList.length,
+    
+    // AI相关getters
+    currentAIMessages: (state) => {
+      const sessionId = state.currentSessionId
+      return state.aiMessages[sessionId] || []
+    }
   },
   mutations: {
     setUserInfo(state, userInfo) {
@@ -180,6 +193,26 @@ export default createStore({
     },
     setPendingApplyList(state, list) {
         state.pendingApplyList = list
+    },
+    
+    // AI相关mutations
+    setSystemAISession(state, session) {
+      state.systemAISession = session
+    },
+    setAISessions(state, sessions) {
+      state.aiSessions = sessions
+    },
+    setShowAgentManage(state, show) {
+      state.showAgentManage = show
+    },
+    setAIMessages(state, { sessionId, messages }) {
+      state.aiMessages[sessionId] = messages
+    },
+    appendAIMessage(state, { sessionId, message }) {
+      if (!state.aiMessages[sessionId]) {
+        state.aiMessages[sessionId] = []
+      }
+      state.aiMessages[sessionId].push(message)
     }
   },
   actions: {
@@ -319,6 +352,29 @@ export default createStore({
             console.error('WS not connected, message not sent')
             // 可以做消息队列缓存，待重连后发送
         }
+    },
+    
+    // AI相关actions
+    async loadSystemAISession({ commit }) {
+      try {
+        const res = await getSystemSession()
+        if (res.data && res.data.code === 200) {
+          commit('setSystemAISession', res.data.data)
+        }
+      } catch (error) {
+        console.error('Failed to load system AI session:', error)
+      }
+    },
+    
+    async loadAISessions({ commit }, params = {}) {
+      try {
+        const res = await getSessions(params)
+        if (res.data && res.data.code === 200) {
+          commit('setAISessions', res.data.data?.sessions || [])
+        }
+      } catch (error) {
+        console.error('Failed to load AI sessions:', error)
+      }
     }
   },
   modules: {

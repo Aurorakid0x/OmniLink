@@ -51,6 +51,9 @@
         v-model:visible="showCreateGroup"
         @success="handleCreateGroupSuccess"
       />
+      
+      <!-- Agent管理弹窗 -->
+      <AgentManageDialog v-model:visible="showAgentManage" />
     </div>
   </div>
 </template>
@@ -64,7 +67,9 @@ import ContactList from '../components/chat/ContactList.vue'
 import ChatWindow from '../components/chat/ChatWindow.vue'
 import GroupInfo from '../components/chat/GroupInfo.vue'
 import CreateGroupDialog from '../components/chat/CreateGroupDialog.vue'
+import AgentManageDialog from '../components/chat/AgentManageDialog.vue'
 import { getMessageList, getGroupMessageList, normalizeUrl } from '../api/im'
+import { getSessionMessages } from '../api/ai'
 import { normalizeSession } from '../utils/imNormalize'
 
 const HISTORY_PAGE_SIZE = 20
@@ -82,6 +87,7 @@ const currentSession = computed(() => {
     return store.state.sessionList.find(s => s.session_id === currentSessionId.value)
 })
 const currentMessages = computed(() => store.getters.currentMessages)
+const showAgentManage = computed(() => store.state.showAgentManage)
 
 // History paging (per peer)
 const historyPageMap = ref({})
@@ -89,16 +95,27 @@ const historyNoMoreMap = ref({})
 
 // Logic
 const handleSelectSession = (session) => {
-  const peerId = session.peer_id
-  store.commit('setCurrentSession', { 
+  if (session.type === 'ai') {
+    // AI会话
+    store.commit('setCurrentSession', { 
       sessionId: session.session_id, 
-      peerId: peerId 
-  })
+      peerId: null, // AI会话无peerId
+      isAISession: true
+    })
+    loadAIMessages(session.session_id)
+  } else {
+    // IM会话（现有逻辑保持不变）
+    const peerId = session.peer_id
+    store.commit('setCurrentSession', { 
+        sessionId: session.session_id, 
+        peerId: peerId 
+    })
 
-  historyPageMap.value[peerId] = 1
-  historyNoMoreMap.value[peerId] = false
+    historyPageMap.value[peerId] = 1
+    historyNoMoreMap.value[peerId] = false
 
-  loadHistoryMessages(peerId, 1, false)
+    loadHistoryMessages(peerId, 1, false)
+  }
 }
 
 const handleStartChatFromContact = (data) => {
@@ -186,6 +203,18 @@ const handleLoadMore = async () => {
     historyPageMap.value[peerId] = nextPage
 
     await loadHistoryMessages(peerId, nextPage, true)
+}
+
+// 加载AI会话消息
+const loadAIMessages = async (sessionId) => {
+  try {
+    const res = await getSessionMessages(sessionId, { limit: 100, offset: 0 })
+    if (res.data && res.data.code === 200) {
+      store.commit('setAIMessages', { sessionId, messages: res.data.data.messages || [] })
+    }
+  } catch (error) {
+    console.error('Failed to load AI messages:', error)
+  }
 }
 
 const handleSendMessage = (payload) => {
