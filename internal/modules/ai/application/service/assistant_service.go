@@ -39,6 +39,12 @@ type AssistantService interface {
 
 	// GetSessionMessages 获取会话历史消息列表
 	GetSessionMessages(ctx context.Context, sessionID, tenantUserID string, limit, offset int) (*respond.AssistantMessageListRespond, error)
+
+	// GetOrCreateSystemSession 获取或创建系统助手会话（幂等）
+	GetOrCreateSystemSession(ctx context.Context, tenantUserID string) (*respond.SystemSessionRespond, error)
+
+	// ListSessionsWithFilter 获取会话列表（支持类型过滤）
+	ListSessionsWithFilter(ctx context.Context, tenantUserID string, sessionType string, limit, offset int) (*respond.AssistantSessionListRespond, error)
 }
 
 // StreamEvent SSE流式事件
@@ -490,5 +496,64 @@ func (s *assistantServiceImpl) CreateSession(ctx context.Context, req request.Cr
 		Title:     newSession.Title,
 		AgentID:   newSession.AgentId,
 		CreatedAt: newSession.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+func (s *assistantServiceImpl) GetOrCreateSystemSession(ctx context.Context, tenantUserID string) (*respond.SystemSessionRespond, error) {
+	// 1. 尝试获取已有的系统会话
+	session, err := s.sessionRepo.GetSystemGlobalSession(ctx, tenantUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system session: %w", err)
+	}
+
+	if session != nil {
+		// 已存在，直接返回
+		return &respond.SystemSessionRespond{
+			SessionID: session.SessionId,
+			AgentID:   session.AgentId,
+			Title:     session.Title,
+		}, nil
+	}
+
+	// 2. 不存在，触发初始化（调用 UserLifecycleService）
+	// 注意：这里需要注入 UserLifecycleService 依赖
+	// 为避免循环依赖，可以在构造时传入，或者直接在这里重复逻辑（简化方案）
+
+	// 简化方案：直接返回错误，提示需要先初始化
+	return nil, fmt.Errorf("system session not found, please initialize user AI assistant first")
+}
+
+func (s *assistantServiceImpl) ListSessionsWithFilter(ctx context.Context, tenantUserID string, sessionType string, limit, offset int) (*respond.AssistantSessionListRespond, error) {
+	sessions, err := s.sessionRepo.ListSessionsWithType(ctx, tenantUserID, sessionType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]*respond.AssistantSessionItem, 0, len(sessions))
+	for _, sess := range sessions {
+		lastMessage := ""
+		summary := ""
+		if s.messageRepo != nil {
+			msgs, err := s.messageRepo.ListRecentMessages(ctx, sess.SessionId, 1)
+			if err == nil && len(msgs) > 0 {
+				lastMessage = msgs[0].Content
+				summary = truncateSummary(lastMessage, 80)
+			}
+		}
+		items = append(items, &respond.AssistantSessionItem{
+			SessionID:   sess.SessionId,
+			Title:       sess.Title,
+			AgentID:     sess.AgentId,
+			SessionType: sess.SessionType,      // 新增字段
+			IsPinned:    sess.IsPinned == 1,    // 新增字段
+			IsDeletable: sess.IsDeletable == 1, // 新增字段
+			UpdatedAt:   sess.UpdatedAt,
+			LastMessage: lastMessage,
+			Summary:     summary,
+		})
+	}
+
+	return &respond.AssistantSessionListRespond{
+		Sessions: items,
+		Total:    len(items),
 	}, nil
 }

@@ -48,6 +48,9 @@ type AssistantSessionItem struct {
 	UpdatedAt   time.Time `json:"updated_at"`   // 最后更新时间
 	LastMessage string    `json:"last_message"` // 最新消息内容
 	Summary     string    `json:"summary"`      // 列表摘要
+	SessionType string    `json:"session_type"` // 会话类型
+	IsPinned    bool      `json:"is_pinned"`    // 是否置顶
+	IsDeletable bool      `json:"is_deletable"` // 是否可删除
 }
 
 // AssistantSessionListRespond 会话列表响应
@@ -87,4 +90,11 @@ type AssistantMessageListRespond struct {
 	SessionID string                  `json:"session_id"` // 会话ID
 	Messages  []*AssistantMessageItem `json:"messages"`   // 消息列表（按时间正序）
 	Total     int                     `json:"total"`      // 总消息数
+}
+
+// SystemSessionRespond 系统助手会话响应
+type SystemSessionRespond struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	Title     string `json:"title"`
 }
