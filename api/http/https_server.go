@@ -274,13 +274,18 @@ func init() {
 		authed.POST("/ai/rag/query", aiQueryH.Query)
 	}
 	if aiAssistantH != nil {
-		authed.POST("/ai/assistant/chat", aiAssistantH.Chat)
-		authed.POST("/ai/assistant/chat/stream", aiAssistantH.ChatStream)
-		authed.GET("/ai/assistant/sessions", aiAssistantH.ListSessions)
-		authed.GET("/ai/assistant/sessions/:session_id/messages", aiAssistantH.GetSessionMessages)
-		authed.GET("/ai/assistant/agents", aiAssistantH.ListAgents)
-		authed.POST("/ai/assistant/agents", aiAssistantH.CreateAgent)
-		authed.POST("/ai/assistant/sessions", aiAssistantH.CreateSession)
+		// AI Assistant Routes
+		aiGroup := authed.Group("/ai/assistant")
+		{
+			aiGroup.GET("/system-session", aiAssistantH.GetSystemSession) // 新增
+			aiGroup.GET("/sessions", aiAssistantH.ListSessions)           // 已有，支持type参数
+			aiGroup.GET("/agents", aiAssistantH.ListAgents)
+			aiGroup.GET("/sessions/:session_id/messages", aiAssistantH.GetSessionMessages)
+			aiGroup.POST("/chat", aiAssistantH.Chat)
+			aiGroup.POST("/chat/stream", aiAssistantH.ChatStream)
+			aiGroup.POST("/agents", aiAssistantH.CreateAgent)
+			aiGroup.POST("/sessions", aiAssistantH.CreateSession)
+		}
 	}
 	authed.POST("/contact/getUserList", contactH.GetUserList)
 	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)

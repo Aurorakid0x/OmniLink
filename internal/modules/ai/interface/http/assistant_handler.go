@@ -113,14 +113,13 @@ func (h *AssistantHandler) ChatStream(c *gin.Context) {
 	zlog.Info("assistant chat stream completed", zap.String("uuid", uuid))
 }
 
-// ListSessions 获取AI助手会话列表
+// ListSessions 获取AI助手会话列表（支持类型过滤）
 //
 // 路由: GET /ai/assistant/sessions
 // 鉴权: 需要JWT
-// 查询参数: limit, offset
+// 查询参数: limit, offset, type (可选，值为 system_global 或 normal)
 // 响应体: AssistantSessionListRespond
 func (h *AssistantHandler) ListSessions(c *gin.Context) {
-	// 从JWT中提取tenant_user_id
 	uuid := strings.TrimSpace(c.GetString("uuid"))
 	if uuid == "" {
 		back.Error(c, xerr.Unauthorized, "未登录")
@@ -130,6 +129,8 @@ func (h *AssistantHandler) ListSessions(c *gin.Context) {
 	// 解析查询参数
 	limit := 20
 	offset := 0
+	sessionType := strings.TrimSpace(c.Query("type")) // 新增参数
+
 	if l, ok := c.GetQuery("limit"); ok {
 		if n, err := parsePositiveInt(l); err == nil && n > 0 {
 			limit = n
@@ -141,8 +142,8 @@ func (h *AssistantHandler) ListSessions(c *gin.Context) {
 		}
 	}
 
-	// 调用Service
-	data, err := h.svc.ListSessions(c.Request.Context(), uuid, limit, offset)
+	// 调用Service（改为调用新方法）
+	data, err := h.svc.ListSessionsWithFilter(c.Request.Context(), uuid, sessionType, limit, offset)
 	if err != nil {
 		zlog.Error("assistant list sessions failed", zap.Error(err), zap.String("uuid", uuid))
 	}
@@ -293,4 +294,23 @@ func parsePositiveInt(s string) (int, error) {
 		return 0, fmt.Errorf("negative number")
 	}
 	return n, nil
+}
+
+// GetSystemSession 获取系统助手会话
+//
+// 路由: GET /ai/assistant/system-session
+// 鉴权: 需要JWT
+// 响应体: SystemSessionRespond
+func (h *AssistantHandler) GetSystemSession(c *gin.Context) {
+	uuid := strings.TrimSpace(c.GetString("uuid"))
+	if uuid == "" {
+		back.Error(c, xerr.Unauthorized, "未登录")
+		return
+	}
+
+	data, err := h.svc.GetOrCreateSystemSession(c.Request.Context(), uuid)
+	if err != nil {
+		zlog.Error("get system session failed", zap.Error(err), zap.String("uuid", uuid))
+	}
+	back.Result(c, data, err)
 }
