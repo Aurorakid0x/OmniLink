@@ -22,4 +22,10 @@ type AgentRepository interface {
 
 	// DisableAgent 禁用Agent
 	DisableAgent(ctx context.Context, agentId, ownerId string) error
+
+	// GetSystemGlobalAgent 获取用户的系统全局助手Agent
+	GetSystemGlobalAgent(ctx context.Context, tenantUserID string) (*agent.AIAgent, error)
+
+	// CreateSystemGlobalAgent 创建系统全局助手Agent（仅内部调用，带唯一性检查）
+	CreateSystemGlobalAgent(ctx context.Context, ag *agent.AIAgent) error
 }

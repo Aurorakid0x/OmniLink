@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -104,4 +106,37 @@ func (r *agentRepositoryImpl) DisableAgent(ctx context.Context, agentId, ownerId
 			"status":     agent.AgentStatusDisabled,
 			"updated_at": time.Now(),
 		}).Error
+}
+
+func (r *agentRepositoryImpl) GetSystemGlobalAgent(ctx context.Context, tenantUserID string) (*agent.AIAgent, error) {
+	var ag agent.AIAgent
+	err := r.db.WithContext(ctx).
+		Where("owner_id = ? AND is_system_global = ?", tenantUserID, agent.IsSystemGlobalTrue).
+		First(&ag).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil // 未找到返回nil，不报错
+		}
+		return nil, err
+	}
+	return &ag, nil
+}
+
+func (r *agentRepositoryImpl) CreateSystemGlobalAgent(ctx context.Context, ag *agent.AIAgent) error {
+	// 检查该用户是否已有系统全局助手
+	existing, err := r.GetSystemGlobalAgent(ctx, ag.OwnerId)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return fmt.Errorf("user already has a system global agent")
+	}
+
+	// 强制设置关键字段
+	ag.IsSystemGlobal = agent.IsSystemGlobalTrue
+	ag.OwnerType = agent.OwnerTypeUser // 注意：虽然是系统级，但归属仍为用户
+	ag.Status = agent.AgentStatusEnabled
+
+	return r.db.WithContext(ctx).Create(ag).Error
 }

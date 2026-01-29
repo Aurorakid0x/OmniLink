@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -182,4 +184,60 @@ func (r *assistantMessageRepositoryImpl) CountSessionMessages(ctx context.Contex
 		Where("session_id = ?", sessionId).
 		Count(&count).Error
 	return count, err
+}
+
+func (r *assistantSessionRepositoryImpl) GetSystemGlobalSession(ctx context.Context, tenantUserID string) (*assistant.AIAssistantSession, error) {
+	var session assistant.AIAssistantSession
+	err := r.db.WithContext(ctx).
+		Where("tenant_user_id = ? AND session_type = ?", tenantUserID, assistant.SessionTypeSystemGlobal).
+		First(&session).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (r *assistantSessionRepositoryImpl) CreateSystemGlobalSession(ctx context.Context, session *assistant.AIAssistantSession) error {
+	// 检查该用户是否已有系统助手会话
+	existing, err := r.GetSystemGlobalSession(ctx, session.TenantUserId)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return fmt.Errorf("user already has a system global session")
+	}
+
+	// 强制设置关键字段
+	session.SessionType = assistant.SessionTypeSystemGlobal
+	session.IsPinned = assistant.IsPinnedTrue
+	session.IsDeletable = assistant.IsDeletableFalse
+	session.Status = assistant.SessionStatusActive
+
+	return r.db.WithContext(ctx).Create(session).Error
+}
+
+func (r *assistantSessionRepositoryImpl) ListSessionsWithType(ctx context.Context, tenantUserID string, sessionType string, limit, offset int) ([]*assistant.AIAssistantSession, error) {
+	var sessions []*assistant.AIAssistantSession
+
+	query := r.db.WithContext(ctx).
+		Where("tenant_user_id = ? AND status = ?", tenantUserID, assistant.SessionStatusActive)
+
+	// 如果指定了类型，则过滤
+	if sessionType != "" {
+		query = query.Where("session_type = ?", sessionType)
+	}
+
+	// 按置顶和更新时间排序
+	query = query.Order("is_pinned DESC, updated_at DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit).Offset(offset)
+	}
+
+	err := query.Find(&sessions).Error
+	return sessions, err
 }

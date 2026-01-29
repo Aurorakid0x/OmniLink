@@ -25,6 +25,15 @@ type AssistantSessionRepository interface {
 
 	// UpdateSessionUpdatedAt 更新会话的updated_at时间（每次消息后调用）
 	UpdateSessionUpdatedAt(ctx context.Context, sessionId string) error
+
+	// GetSystemGlobalSession 获取用户的系统级助手会话
+	GetSystemGlobalSession(ctx context.Context, tenantUserID string) (*assistant.AIAssistantSession, error)
+
+	// CreateSystemGlobalSession 创建系统级助手会话（带唯一性检查）
+	CreateSystemGlobalSession(ctx context.Context, session *assistant.AIAssistantSession) error
+
+	// ListSessionsWithType 获取会话列表（支持按类型过滤、置顶排序）
+	ListSessionsWithType(ctx context.Context, tenantUserID string, sessionType string, limit, offset int) ([]*assistant.AIAssistantSession, error)
 }
 
 // AssistantMessageRepository AI助手消息仓储接口
