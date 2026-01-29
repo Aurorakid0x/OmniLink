@@ -9,9 +9,11 @@ import (
 	"OmniLink/pkg/util/myjwt"
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
+	"context"
 	"errors"
 	"time"
 
+	aiService "OmniLink/internal/modules/ai/application/service"
 	"gorm.io/gorm"
 )
 
@@ -22,12 +24,16 @@ type UserInfoService interface {
 }
 
 type userInfoServiceImpl struct {
-	repo repository.UserInfoRepository
+	repo         repository.UserInfoRepository
+	lifecycleSvc aiService.UserLifecycleService // AI模块：用户生命周期服务
 }
 
 // NewUserInfoService 构造函数
-func NewUserInfoService(repo repository.UserInfoRepository) UserInfoService {
-	return &userInfoServiceImpl{repo: repo}
+func NewUserInfoService(repo repository.UserInfoRepository, lifecycleSvc aiService.UserLifecycleService) UserInfoService {
+	return &userInfoServiceImpl{
+		repo:         repo,
+		lifecycleSvc: lifecycleSvc,
+	}
 }
 
 func (u *userInfoServiceImpl) Register(registerReq request.RegisterRequest) (*respond.RegisterRespond, error) {
@@ -60,6 +66,17 @@ func (u *userInfoServiceImpl) Register(registerReq request.RegisterRequest) (*re
 		zlog.Error(err.Error())
 		return nil, xerr.ErrServerError
 	}
+
+	// ==================== AI模块集成点 ====================
+	// 用户注册成功后，初始化AI助手（创建全局Agent和系统会话）
+	// 注意：此处失败不影响注册流程，仅记录日志
+	if u.lifecycleSvc != nil {
+		if err := u.lifecycleSvc.InitializeUserAIAssistant(context.Background(), newUser.Uuid); err != nil {
+			zlog.Error("用户AI助手初始化失败，用户UUID: " + newUser.Uuid + ", 错误: " + err.Error())
+			// 不返回错误，不阻断注册流程
+		}
+	}
+	// =====================================================
 
 	token, err := myjwt.GenerateToken(newUser.Uuid, newUser.Username)
 	if err != nil {

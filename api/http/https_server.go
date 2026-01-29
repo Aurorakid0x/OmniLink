@@ -70,6 +70,7 @@ func init() {
 	var aiAssistantH *aiHTTP.AssistantHandler
 	var assistantPipeline *aiPipeline.AssistantPipeline
 	var aiAsyncIngest aiService.AsyncIngestService
+	var userLifecycleSvc aiService.UserLifecycleService // 用户生命周期服务（用于新用户AI助手初始化）
 	if initial.MilvusClient != nil {
 		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
@@ -137,6 +138,9 @@ func init() {
 						messageRepo := aiPersistence.NewAssistantMessageRepository(initial.GormDB)
 						agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
 
+						// 初始化用户生命周期服务：用于新用户注册时初始化AI助手
+						userLifecycleSvc = aiService.NewUserLifecycleService(agentRepo, sessionRepo, ragRepo)
+
 						assistantPipeline, err = aiPipeline.NewAssistantPipeline(
 							sessionRepo,
 							messageRepo,
@@ -180,7 +184,7 @@ func init() {
 	} else {
 		zlog.Warn("ai milvus client is nil; ai routes disabled")
 	}
-	userSvc := service.NewUserInfoService(userRepo)
+	userSvc := service.NewUserInfoService(userRepo, userLifecycleSvc)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow, aiAsyncIngest)
 	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow, aiAsyncIngest)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
