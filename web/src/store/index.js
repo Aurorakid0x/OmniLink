@@ -375,6 +375,105 @@ export default createStore({
       } catch (error) {
         console.error('Failed to load AI sessions:', error)
       }
+    },
+    
+    // 发送AI消息（调用AI聊天API）
+    async sendAIMessage({ commit, state }, { sessionId, question, agentId }) {
+      // 导入需要用到的API
+      const { chatStream } = await import('../api/ai')
+      
+      try {
+        // 先添加用户消息到UI
+        const userMessage = {
+          role: 'user',
+          content: question,
+          created_at: new Date().toISOString()
+        }
+        commit('appendAIMessage', { sessionId, message: userMessage })
+        
+        // 调用流式AI API
+        const response = await chatStream({
+          question,
+          session_id: sessionId,
+          agent_id: agentId
+        })
+        
+        // 解析SSE流
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let assistantMessage = {
+          role: 'assistant',
+          content: '',
+          citations: [],
+          created_at: new Date().toISOString()
+        }
+        
+        // 先添加assistant消息占位
+        const msgIndex = (state.aiMessages[sessionId] || []).length
+        commit('appendAIMessage', { sessionId, message: assistantMessage })
+        
+        let currentEvent = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+          
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed) continue
+            if (trimmed.startsWith('event:')) {
+              currentEvent = trimmed.substring(6).trim()
+              continue
+            }
+            if (!trimmed.startsWith('data:')) continue
+            
+            const dataStr = trimmed.substring(5).trim()
+            if (!dataStr) continue
+            
+            try {
+              const data = JSON.parse(dataStr)
+              
+              if (currentEvent === 'delta') {
+                const token = data.token || ''
+                assistantMessage.content += token
+                // 更新最后一条消息
+                const messages = state.aiMessages[sessionId]
+                if (messages && messages.length > msgIndex) {
+                  messages[msgIndex] = { ...assistantMessage }
+                }
+              } else if (currentEvent === 'done') {
+                if (data.citations) {
+                  assistantMessage.citations = data.citations
+                }
+                // 最终更新
+                const messages = state.aiMessages[sessionId]
+                if (messages && messages.length > msgIndex) {
+                  messages[msgIndex] = { ...assistantMessage }
+                }
+              } else if (currentEvent === 'error') {
+                console.error('AI chat error:', data.error)
+                // 移除占位消息
+                const messages = state.aiMessages[sessionId]
+                if (messages && messages.length > msgIndex) {
+                  messages.splice(msgIndex, 1)
+                }
+                throw new Error(data.error || 'AI chat failed')
+              }
+            } catch (parseErr) {
+              console.error('Failed to parse SSE event:', parseErr)
+            }
+          }
+        }
+        
+        return true
+      } catch (error) {
+        console.error('Failed to send AI message:', error)
+        throw error
+      }
     }
   },
   modules: {

@@ -539,10 +539,21 @@ func (s *assistantServiceImpl) ListSessionsWithFilter(ctx context.Context, tenan
 				summary = truncateSummary(lastMessage, 80)
 			}
 		}
+
+		// 查询Agent名称
+		agentName := ""
+		if sess.AgentId != "" && s.agentRepo != nil {
+			ag, err := s.agentRepo.GetAgentByID(ctx, sess.AgentId, tenantUserID)
+			if err == nil && ag != nil {
+				agentName = ag.Name
+			}
+		}
+
 		items = append(items, &respond.AssistantSessionItem{
 			SessionID:   sess.SessionId,
 			Title:       sess.Title,
 			AgentID:     sess.AgentId,
+			AgentName:   agentName,             // 新增字段
 			SessionType: sess.SessionType,      // 新增字段
 			IsPinned:    sess.IsPinned == 1,    // 新增字段
 			IsDeletable: sess.IsDeletable == 1, // 新增字段

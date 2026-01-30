@@ -71,6 +71,7 @@ import AgentManageDialog from '../components/chat/AgentManageDialog.vue'
 import { getMessageList, getGroupMessageList, normalizeUrl } from '../api/im'
 import { getSessionMessages } from '../api/ai'
 import { normalizeSession } from '../utils/imNormalize'
+import { ElMessage } from 'element-plus'
 
 const HISTORY_PAGE_SIZE = 20
 
@@ -231,27 +232,46 @@ const loadAIMessages = async (sessionId) => {
   }
 }
 
-const handleSendMessage = (payload) => {
+const handleSendMessage = async (payload) => {
     // payload: { type, content, url, ... }
     if (!currentSession.value) return
     
-    const peerId = currentSession.value.peer_id
+    // 判断是否为AI会话
+    const isAI = !!(store.state.systemAISession && store.state.systemAISession.session_id === currentSessionId.value) || 
+                 !!store.state.aiSessions.find(s => s.session_id === currentSessionId.value)
     
-    const msgData = {
-        session_id: currentSessionId.value,
-        type: payload.type,
-        content: payload.content || '',
-        url: payload.url || '',
-        send_id: userInfo.value.uuid,
-        send_name: userInfo.value.nickname,
-        send_avatar: userInfo.value.avatar, 
-        receive_id: peerId,
-        file_name: payload.file_name || '',
-        file_size: payload.file_size || '',
-        file_type: payload.file_type || ''
+    if (isAI) {
+        // AI会话：调用AI API
+        try {
+            await store.dispatch('sendAIMessage', {
+                sessionId: currentSessionId.value,
+                question: payload.content,
+                agentId: currentSession.value.agent_id
+            })
+        } catch (error) {
+            console.error('Failed to send AI message:', error)
+            ElMessage.error('发送失败，请重试')
+        }
+    } else {
+        // IM会话：使用WebSocket
+        const peerId = currentSession.value.peer_id
+        
+        const msgData = {
+            session_id: currentSessionId.value,
+            type: payload.type,
+            content: payload.content || '',
+            url: payload.url || '',
+            send_id: userInfo.value.uuid,
+            send_name: userInfo.value.nickname,
+            send_avatar: userInfo.value.avatar, 
+            receive_id: peerId,
+            file_name: payload.file_name || '',
+            file_size: payload.file_size || '',
+            file_type: payload.file_type || ''
+        }
+        
+        store.dispatch('sendMessage', msgData)
     }
-    
-    store.dispatch('sendMessage', msgData)
 }
 
 // WebSocket Lifecycle

@@ -54,7 +54,10 @@
             <span class="name">{{ aiSession.title }}</span>
             <el-tag size="small" type="info" effect="plain">AI</el-tag>
           </div>
-          <div class="item-msg text-ellipsis">{{ aiSession.summary || '点击开始对话' }}</div>
+          <div class="item-msg text-ellipsis">
+            <span v-if="aiSession.agent_name" class="agent-tag">{{ aiSession.agent_name }}</span>
+            {{ aiSession.summary || '点击开始对话' }}
+          </div>
         </div>
       </div>
 
@@ -308,6 +311,17 @@ onMounted(async () => {
 .item-msg {
   font-size: 12px;
   color: #909399;
+}
+
+.agent-tag {
+  display: inline-block;
+  background: rgba(138, 43, 226, 0.1);
+  color: #8a2be2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-right: 6px;
+  font-weight: 500;
 }
 
 .text-ellipsis {

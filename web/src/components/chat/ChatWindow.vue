@@ -13,13 +13,13 @@
 
     <!-- Message List -->
     <div class="message-area custom-scrollbar" ref="msgListRef" @scroll="handleScroll">
-        <div v-for="msg in messages" :key="msg.uuid || msg.id" class="message-row" :class="{ 'is-mine': isMine(msg) }">
-            <el-avatar :src="normalizeUrl(msg.send_avatar)" :size="36" class="msg-avatar">
-                {{ msg.send_name ? msg.send_name[0] : '?' }}
+        <div v-for="msg in messages" :key="msg.uuid || msg.id || msg.created_at" class="message-row" :class="{ 'is-mine': isMine(msg) }">
+            <el-avatar :src="getAvatarUrl(msg)" :size="36" class="msg-avatar">
+                {{ getAvatarText(msg) }}
             </el-avatar>
             
             <div class="msg-content-wrapper">
-                <div class="msg-sender" v-if="isGroup && !isMine(msg)">{{ msg.send_name }}</div>
+                <div class="msg-sender" v-if="isGroup && !isMine(msg)">{{ getSenderName(msg) }}</div>
                 
                 <!-- Text Message -->
                 <div class="msg-bubble" v-if="msg.type === 0 || msg.type === undefined">
@@ -207,7 +207,58 @@ watch(() => props.session, async (sess) => {
 }, { immediate: true })
 
 const isMine = (msg) => {
+    // AI消息使用role字段判断
+    if (msg.role !== undefined) {
+        return msg.role === 'user'
+    }
+    // IM消息使用send_id判断
     return msg.send_id === store.state.userInfo.uuid
+}
+
+// 获取消息头像URL
+const getAvatarUrl = (msg) => {
+    // AI消息
+    if (msg.role !== undefined) {
+        if (msg.role === 'user') {
+            // 用户消息：使用当前用户头像
+            return normalizeUrl(store.state.userInfo.avatar)
+        } else {
+            // AI助手消息：使用默认AI头像或占位图
+            return '' // 空字符串会显示fallback字符
+        }
+    }
+    // IM消息：使用消息中的头像
+    return normalizeUrl(msg.send_avatar)
+}
+
+// 获取头像显示字符
+const getAvatarText = (msg) => {
+    // AI消息
+    if (msg.role !== undefined) {
+        if (msg.role === 'user') {
+            const nickname = store.state.userInfo.nickname || store.state.userInfo.username || 'Me'
+            return nickname[0]
+        } else {
+            return 'AI'
+        }
+    }
+    // IM消息
+    return msg.send_name ? msg.send_name[0] : '?'
+}
+
+// 获取发送者名称
+const getSenderName = (msg) => {
+    // AI消息
+    if (msg.role !== undefined) {
+        if (msg.role === 'user') {
+            return store.state.userInfo.nickname || store.state.userInfo.username || '我'
+        } else {
+            // 尝试从当前会话获取agent名称
+            return props.session?.agent_name || 'AI助手'
+        }
+    }
+    // IM消息
+    return msg.send_name || '未知'
 }
 
 const isImage = (typeOrUrl) => {

@@ -45,6 +45,7 @@ type AssistantSessionItem struct {
 	SessionID   string    `json:"session_id"`   // 会话ID
 	Title       string    `json:"title"`        // 会话标题
 	AgentID     string    `json:"agent_id"`     // 绑定的Agent ID
+	AgentName   string    `json:"agent_name"`   // Agent名称（用于前端显示）
 	UpdatedAt   time.Time `json:"updated_at"`   // 最后更新时间
 	LastMessage string    `json:"last_message"` // 最新消息内容
 	Summary     string    `json:"summary"`      // 列表摘要
