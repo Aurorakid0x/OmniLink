@@ -36,8 +36,8 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 	)
 
 	// 注册工具
-	if conf.EnableContactTools && deps.ContactSvc != nil {
-		contactHandler := mcpHandlers.NewContactToolHandler(deps.ContactSvc)
+	if conf.EnableContactTools && deps.ContactSvc != nil && deps.GroupSvc != nil {
+		contactHandler := mcpHandlers.NewContactToolHandler(deps.ContactSvc, deps.GroupSvc)
 		contactHandler.RegisterTools(s)
 	}
 

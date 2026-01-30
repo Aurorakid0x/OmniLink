@@ -12,31 +12,67 @@ import (
 	"go.uber.org/zap"
 
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
-	contactRespond "OmniLink/internal/modules/contact/application/dto/respond"
 	contactService "OmniLink/internal/modules/contact/application/service"
 )
 
 // ContactToolHandler 好友/联系人工具处理器
 type ContactToolHandler struct {
 	contactSvc contactService.ContactService
+	groupSvc   contactService.GroupService
 }
 
 // NewContactToolHandler 创建 ContactToolHandler
-func NewContactToolHandler(svc contactService.ContactService) *ContactToolHandler {
+func NewContactToolHandler(contactSvc contactService.ContactService, groupSvc contactService.GroupService) *ContactToolHandler {
 	return &ContactToolHandler{
-		contactSvc: svc,
+		contactSvc: contactSvc,
+		groupSvc:   groupSvc,
 	}
 }
 
-// RegisterTools 注册所有好友相关工具到 Server
+// RegisterTools 注册所有好友/联系人/群组相关工具到 Server
 func (h *ContactToolHandler) RegisterTools(s *server.MCPServer) {
 	// 注册 contact_list_friends 工具
-	tool := mcp.NewTool("contact_list_friends",
-		mcp.WithDescription("获取用户的好友列表，返回好友基本信息（用户名、头像、状态）"),
+	listFriendsTool := mcp.NewTool("contact_list_friends",
+		mcp.WithDescription("获取用户的好友列表，返回好友基本信息（用户名、头像、状态）JSON数据"),
 		mcp.WithString("tenant_user_id", mcp.Required(), mcp.Description("租户用户ID（必填，从上下文获取）")),
 	)
+	s.AddTool(listFriendsTool, h.handleListFriends)
 
-	s.AddTool(tool, h.handleListFriends)
+	// 注册 contact_get_info 工具
+	getContactInfoTool := mcp.NewTool("contact_get_info",
+		mcp.WithDescription("获取指定联系人的详细信息，包括头像、签名、性别、生日等JSON数据"),
+		mcp.WithString("tenant_user_id", mcp.Required(), mcp.Description("租户用户ID（必填，从上下文获取）")),
+		mcp.WithString("contact_id", mcp.Required(), mcp.Description("联系人ID（必填）")),
+	)
+	s.AddTool(getContactInfoTool, h.handleGetContactInfo)
+
+	// 注册 contact_get_new_list 工具
+	getNewContactListTool := mcp.NewTool("contact_get_new_list",
+		mcp.WithDescription("获取待处理的好友申请列表，包括申请人信息、申请消息等JSON数据"),
+		mcp.WithString("tenant_user_id", mcp.Required(), mcp.Description("租户用户ID（必填，从上下文获取）")),
+	)
+	s.AddTool(getNewContactListTool, h.handleGetNewContactList)
+
+	// 注册 contact_my_groups 工具
+	myGroupsTool := mcp.NewTool("contact_my_groups",
+		mcp.WithDescription("获取用户已加入的群组列表，返回群组基本信息JSON数据"),
+		mcp.WithString("tenant_user_id", mcp.Required(), mcp.Description("租户用户ID（必填，从上下文获取）")),
+	)
+	s.AddTool(myGroupsTool, h.handleLoadMyJoinedGroups)
+
+	// 注册 group_get_info 工具
+	getGroupInfoTool := mcp.NewTool("group_get_info",
+		mcp.WithDescription("获取指定群组的详细信息，包括群名、公告、成员数、群主等JSON数据"),
+		mcp.WithString("group_id", mcp.Required(), mcp.Description("群组ID（必填）")),
+	)
+	s.AddTool(getGroupInfoTool, h.handleGetGroupInfo)
+
+	// 注册 group_get_members 工具
+	getGroupMembersTool := mcp.NewTool("group_get_members",
+		mcp.WithDescription("获取指定群组的成员列表，包括成员的用户名、昵称、头像、角色等JSON数据"),
+		mcp.WithString("group_id", mcp.Required(), mcp.Description("群组ID（必填）")),
+	)
+	s.AddTool(getGroupMembersTool, h.handleGetGroupMembers)
 }
 
 // handleListFriends 处理获取好友列表
@@ -68,90 +104,165 @@ func (h *ContactToolHandler) handleListFriends(ctx context.Context, request mcp.
 		return mcp.NewToolResultError(fmt.Sprintf("查询好友列表失败：%v", err)), nil
 	}
 
-	zlog.Info("contact_list_friends result", zap.String("tenant_user_id", tenantUserID), zap.Any("friends", friends))
+	zlog.Info("contact_list_friends result", zap.String("tenant_user_id", tenantUserID), zap.Int("count", len(friends)))
 
-	// 3. 转换为人类可读文本
-	textContent := h.formatFriendsAsText(friends, tenantUserID)
-
-	// 4. 返回 MCP 结果
-	return mcp.NewToolResultText(textContent), nil
+	// 3. 返回 JSON 结果
+	return mcp.NewToolResultJSON(friends)
 }
 
-// formatFriendsAsText 将好友列表格式化为文本
-func (h *ContactToolHandler) formatFriendsAsText(friends interface{}, tenantUserID string) string {
-	switch list := friends.(type) {
-	case []contactRespond.UserListItem:
-		if len(list) == 0 {
-			return "您当前还没有添加任何好友。"
-		}
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("找到 %d 位好友：\n", len(list)))
-		for i := range list {
-			statusText := "离线"
-			if list[i].Status == 0 {
-				statusText = "在线"
-			}
-			sb.WriteString(fmt.Sprintf("%d. %s (ID: %s) - %s\n", i+1, list[i].UserName, list[i].UserId, statusText))
-		}
-		return sb.String()
+// handleGetContactInfo 处理获取联系人详情
+func (h *ContactToolHandler) handleGetContactInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("contact_get_info invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
 	}
 
-	friendList, ok := friends.([]interface{})
-	if !ok {
-		if list, ok := friends.([]map[string]interface{}); ok {
-			friendList = make([]interface{}, 0, len(list))
-			for i := range list {
-				friendList = append(friendList, list[i])
-			}
-		} else {
-			return "找到好友列表，但无法解析返回格式。"
-		}
+	tenantUserID, ok := args["tenant_user_id"].(string)
+	if !ok || strings.TrimSpace(tenantUserID) == "" {
+		zlog.Error("contact_get_info missing tenant_user_id")
+		return mcp.NewToolResultError("tenant_user_id is required"), nil
 	}
 
-	if len(friendList) == 0 {
-		return "您当前还没有添加任何好友。"
+	contactID, ok := args["contact_id"].(string)
+	if !ok || strings.TrimSpace(contactID) == "" {
+		zlog.Error("contact_get_info missing contact_id")
+		return mcp.NewToolResultError("contact_id is required"), nil
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("找到 %d 位好友：\n", len(friendList)))
+	zlog.Info("contact_get_info start", zap.String("tenant_user_id", tenantUserID), zap.String("contact_id", contactID))
 
-	for i, friend := range friendList {
-		friendMap, ok := friend.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		userName := ""
-		if v, ok := friendMap["user_name"].(string); ok {
-			userName = v
-		}
-		userId := ""
-		if v, ok := friendMap["user_id"].(string); ok {
-			userId = v
-		}
-		statusVal := int64(1)
-		if v, ok := friendMap["status"]; ok {
-			switch s := v.(type) {
-			case int:
-				statusVal = int64(s)
-			case int8:
-				statusVal = int64(s)
-			case int32:
-				statusVal = int64(s)
-			case int64:
-				statusVal = s
-			case float64:
-				statusVal = int64(s)
-			}
-		}
-
-		statusText := "离线"
-		if statusVal == 0 {
-			statusText = "在线"
-		}
-
-		sb.WriteString(fmt.Sprintf("%d. %s (ID: %s) - %s\n", i+1, userName, userId, statusText))
+	contactInfo, err := h.contactSvc.GetContactInfo(contactRequest.GetContactInfoRequest{
+		OwnerId:   tenantUserID,
+		ContactId: contactID,
+	})
+	if err != nil {
+		zlog.Error("contact_get_info query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("查询联系人详情失败：%v", err)), nil
 	}
 
-	return sb.String()
+	zlog.Info("contact_get_info result", zap.String("contact_id", contactID))
+	return mcp.NewToolResultJSON(contactInfo)
+}
+
+// handleGetNewContactList 处理获取好友申请列表
+func (h *ContactToolHandler) handleGetNewContactList(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("contact_get_new_list invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
+	tenantUserID, ok := args["tenant_user_id"].(string)
+	if !ok || strings.TrimSpace(tenantUserID) == "" {
+		zlog.Error("contact_get_new_list missing tenant_user_id")
+		return mcp.NewToolResultError("tenant_user_id is required"), nil
+	}
+
+	zlog.Info("contact_get_new_list start", zap.String("tenant_user_id", tenantUserID))
+
+	newContactList, err := h.contactSvc.GetNewContactList(contactRequest.GetNewContactListRequest{
+		OwnerId: tenantUserID,
+	})
+	if err != nil {
+		zlog.Error("contact_get_new_list query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("查询好友申请列表失败：%v", err)), nil
+	}
+
+	zlog.Info("contact_get_new_list result", zap.Int("count", len(newContactList)))
+	return mcp.NewToolResultJSON(newContactList)
+}
+
+// handleLoadMyJoinedGroups 处理获取已加入群组列表
+func (h *ContactToolHandler) handleLoadMyJoinedGroups(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("contact_my_groups invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
+	tenantUserID, ok := args["tenant_user_id"].(string)
+	if !ok || strings.TrimSpace(tenantUserID) == "" {
+		zlog.Error("contact_my_groups missing tenant_user_id")
+		return mcp.NewToolResultError("tenant_user_id is required"), nil
+	}
+
+	zlog.Info("contact_my_groups start", zap.String("tenant_user_id", tenantUserID))
+
+	groups, err := h.contactSvc.LoadMyJoinedGroup(contactRequest.LoadMyJoinedGroupRequest{
+		OwnerId: tenantUserID,
+	})
+	if err != nil {
+		zlog.Error("contact_my_groups query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("查询已加入群组列表失败：%v", err)), nil
+	}
+
+	zlog.Info("contact_my_groups result", zap.Int("count", len(groups)))
+	return mcp.NewToolResultJSON(groups)
+}
+
+// handleGetGroupInfo 处理获取群组信息
+func (h *ContactToolHandler) handleGetGroupInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("group_get_info invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
+	groupID, ok := args["group_id"].(string)
+	if !ok || strings.TrimSpace(groupID) == "" {
+		zlog.Error("group_get_info missing group_id")
+		return mcp.NewToolResultError("group_id is required"), nil
+	}
+
+	zlog.Info("group_get_info start", zap.String("group_id", groupID))
+
+	groupInfo, err := h.groupSvc.GetGroupInfo(contactRequest.GetGroupInfoRequest{
+		GroupId: groupID,
+	})
+	if err != nil {
+		zlog.Error("group_get_info query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("查询群组信息失败：%v", err)), nil
+	}
+
+	zlog.Info("group_get_info result", zap.String("group_id", groupID))
+	return mcp.NewToolResultJSON(groupInfo)
+}
+
+// handleGetGroupMembers 处理获取群成员列表
+func (h *ContactToolHandler) handleGetGroupMembers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("group_get_members invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
+	groupID, ok := args["group_id"].(string)
+	if !ok || strings.TrimSpace(groupID) == "" {
+		zlog.Error("group_get_members missing group_id")
+		return mcp.NewToolResultError("group_id is required"), nil
+	}
+
+	zlog.Info("group_get_members start", zap.String("group_id", groupID))
+
+	members, err := h.groupSvc.GetGroupMemberList(contactRequest.GetGroupMemberListRequest{
+		GroupId: groupID,
+	})
+	if err != nil {
+		zlog.Error("group_get_members query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("查询群成员列表失败：%v", err)), nil
+	}
+
+	zlog.Info("group_get_members result", zap.String("group_id", groupID), zap.Int("count", len(members)))
+	return mcp.NewToolResultJSON(members)
 }
