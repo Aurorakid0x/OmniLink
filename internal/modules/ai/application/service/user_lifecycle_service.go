@@ -100,8 +100,8 @@ func (s *userLifecycleServiceImpl) InitializeUserAIAssistant(ctx context.Context
 		KBId:             kbID,
 		ToolsJson:        "[]", // 预留，后续配置MCP工具
 		IsSystemGlobal:   agent.IsSystemGlobalTrue,
-		CapabilitiesJson: "", // 预留
-		ConfigJson:       "", // 预留
+		CapabilitiesJson: "{}", // 预留
+		ConfigJson:       "{}", // 预留
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 	}
