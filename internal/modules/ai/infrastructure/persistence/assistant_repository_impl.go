@@ -119,6 +119,21 @@ func NewAssistantMessageRepository(db *gorm.DB) repository.AssistantMessageRepos
 }
 
 func (r *assistantMessageRepositoryImpl) SaveMessage(ctx context.Context, message *assistant.AIAssistantMessage) error {
+	if message == nil {
+		return nil
+	}
+	if strings.TrimSpace(message.CitationsJson) == "" {
+		message.CitationsJson = "[]"
+	}
+	if strings.TrimSpace(message.TokensJson) == "" {
+		message.TokensJson = "{}"
+	}
+	if strings.TrimSpace(message.MetadataJson) == "" {
+		message.MetadataJson = "{}"
+	}
+	if strings.TrimSpace(message.RenderDataJson) == "" {
+		message.RenderDataJson = "{}"
+	}
 	return r.db.WithContext(ctx).Create(message).Error
 }
 
