@@ -117,6 +117,15 @@ func (u *userInfoServiceImpl) Login(loginReq request.LoginRequest) (*respond.Log
 		return nil, xerr.New(xerr.BadRequest, "密码错误")
 	}
 
+	// ==================== AI模块兜底初始化 ====================
+	// 登录时兜底初始化系统全局AI助手（避免注册时失败导致缺失）
+	if u.lifecycleSvc != nil {
+		if err := u.lifecycleSvc.InitializeUserAIAssistant(context.Background(), user.Uuid); err != nil {
+			zlog.Error("用户AI助手初始化失败，用户UUID: " + user.Uuid + ", 错误: " + err.Error())
+		}
+	}
+	// =====================================================
+
 	token, err := myjwt.GenerateToken(user.Uuid, user.Username)
 	if err != nil {
 		zlog.Error(err.Error())

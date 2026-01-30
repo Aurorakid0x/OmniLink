@@ -43,26 +43,22 @@ func (s *userLifecycleServiceImpl) InitializeUserAIAssistant(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("failed to check existing agent: %w", err)
 	}
-	if existingAgent != nil {
-		// 已存在，直接返回（幂等）
-		return nil
-	}
+	if existingAgent == nil {
+		// 2. 创建全局知识库（如果不存在）
+		kb := &rag.AIKnowledgeBase{
+			OwnerType: "user", // 归属用户
+			OwnerId:   tenantUserID,
+			KBType:    agent.KBTypeGlobal,
+			Name:      "Global Knowledge Base",
+			Status:    rag.CommonStatusEnabled,
+		}
+		kbID, err := s.ragRepo.EnsureKnowledgeBase(ctx, kb)
+		if err != nil {
+			return fmt.Errorf("failed to ensure knowledge base: %w", err)
+		}
 
-	// 2. 创建全局知识库（如果不存在）
-	kb := &rag.AIKnowledgeBase{
-		OwnerType: "user", // 归属用户
-		OwnerId:   tenantUserID,
-		KBType:    agent.KBTypeGlobal,
-		Name:      "Global Knowledge Base",
-		Status:    rag.CommonStatusEnabled,
-	}
-	kbID, err := s.ragRepo.EnsureKnowledgeBase(ctx, kb)
-	if err != nil {
-		return fmt.Errorf("failed to ensure knowledge base: %w", err)
-	}
-
-	// 3. 创建系统全局AI助手Agent
-	systemPrompt := `### 基础身份
+		// 3. 创建系统全局AI助手Agent
+		systemPrompt := `### 基础身份
 你是由 OmniLink 构建的全局 AI 个人助手。你的核心目标是辅助用户管理社交关系、处理消息并提供智能问答。
 
 ### 核心能力与约束
@@ -87,41 +83,51 @@ func (s *userLifecycleServiceImpl) InitializeUserAIAssistant(ctx context.Context
 - 主动通知：定时提醒、日报推送等
 - 智能指令：通过 /todo、/remind 等快捷命令快速执行任务`
 
-	newAgent := &agent.AIAgent{
-		AgentId:          util.GenerateID("AG"),
-		OwnerType:        agent.OwnerTypeUser,
-		OwnerId:          tenantUserID,
-		Name:             "全局AI助手",
-		Description:      "您的专属智能助理，负责消息管理、智能问答和主动通知",
-		PersonaPrompt:    "", // 系统助手无需用户自定义人设
-		SystemPrompt:     systemPrompt,
-		Status:           agent.AgentStatusEnabled,
-		KBType:           agent.KBTypeGlobal,
-		KBId:             kbID,
-		ToolsJson:        "[]", // 预留，后续配置MCP工具
-		IsSystemGlobal:   agent.IsSystemGlobalTrue,
-		CapabilitiesJson: "{}", // 预留
-		ConfigJson:       "{}", // 预留
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		newAgent := &agent.AIAgent{
+			AgentId:          util.GenerateID("AG"),
+			OwnerType:        agent.OwnerTypeUser,
+			OwnerId:          tenantUserID,
+			Name:             "全局AI助手",
+			Description:      "您的专属智能助理，负责消息管理、智能问答和主动通知",
+			PersonaPrompt:    "", // 系统助手无需用户自定义人设
+			SystemPrompt:     systemPrompt,
+			Status:           agent.AgentStatusEnabled,
+			KBType:           agent.KBTypeGlobal,
+			KBId:             kbID,
+			ToolsJson:        "[]", // 预留，后续配置MCP工具
+			IsSystemGlobal:   agent.IsSystemGlobalTrue,
+			CapabilitiesJson: "{}", // 预留
+			ConfigJson:       "{}", // 预留
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
+		}
+
+		if err := s.agentRepo.CreateSystemGlobalAgent(ctx, newAgent); err != nil {
+			return fmt.Errorf("failed to create system global agent: %w", err)
+		}
+		existingAgent = newAgent
 	}
 
-	if err := s.agentRepo.CreateSystemGlobalAgent(ctx, newAgent); err != nil {
-		return fmt.Errorf("failed to create system global agent: %w", err)
+	// 4. 创建系统级助手会话（若不存在）
+	session, err := s.sessionRepo.GetSystemGlobalSession(ctx, tenantUserID)
+	if err != nil {
+		return fmt.Errorf("failed to get system global session: %w", err)
+	}
+	if session != nil {
+		return nil
 	}
 
-	// 4. 创建系统级助手会话
 	newSession := &assistant.AIAssistantSession{
 		SessionId:         util.GenerateID("AS"),
 		TenantUserId:      tenantUserID,
 		Title:             "🤖 AI助手",
 		Status:            assistant.SessionStatusActive,
-		AgentId:           newAgent.AgentId,
+		AgentId:           existingAgent.AgentId,
 		SessionType:       assistant.SessionTypeSystemGlobal,
 		IsPinned:          assistant.IsPinnedTrue,
 		IsDeletable:       assistant.IsDeletableFalse,
-		ContextConfigJson: "", // 预留
-		MetadataJson:      "", // 预留
+		ContextConfigJson: "{}", // 预留
+		MetadataJson:      "{}", // 预留
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
 	}

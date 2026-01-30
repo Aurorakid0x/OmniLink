@@ -33,7 +33,7 @@
       <!-- Chat Window -->
       <ChatWindow 
         :session="currentSession" 
-        :messages="currentMessages"
+        :messages="currentViewMessages"
         @send-message="handleSendMessage"
         @toggle-right-sidebar="showRightSidebar = !showRightSidebar"
         @load-more="handleLoadMore"
@@ -84,9 +84,23 @@ const showCreateGroup = ref(false)
 const userInfo = computed(() => store.state.userInfo)
 const currentSessionId = computed(() => store.state.currentSessionId)
 const currentSession = computed(() => {
-    return store.state.sessionList.find(s => s.session_id === currentSessionId.value)
+  const sid = currentSessionId.value
+  if (!sid) return null
+  const imSess = store.state.sessionList.find(s => s.session_id === sid)
+  const aiSess = store.state.aiSessions.find(s => s.session_id === sid)
+  const sysSess = (store.state.systemAISession && store.state.systemAISession.session_id === sid) ? store.state.systemAISession : null
+  const found = imSess || aiSess || sysSess
+  if (found && !found.peer_name && found.title) {
+    return { ...found, peer_name: found.title }
+  }
+  return found || null
 })
 const currentMessages = computed(() => store.getters.currentMessages)
+const currentViewMessages = computed(() => {
+  const sid = currentSessionId.value
+  const isAI = !!(store.state.systemAISession && store.state.systemAISession.session_id === sid) || !!store.state.aiSessions.find(s => s.session_id === sid)
+  return isAI ? store.getters.currentAIMessages : currentMessages.value
+})
 const showAgentManage = computed(() => store.state.showAgentManage)
 
 // History paging (per peer)
