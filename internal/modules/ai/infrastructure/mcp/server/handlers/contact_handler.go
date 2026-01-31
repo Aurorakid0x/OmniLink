@@ -13,19 +13,30 @@ import (
 
 	contactRequest "OmniLink/internal/modules/contact/application/dto/request"
 	contactService "OmniLink/internal/modules/contact/application/service"
+	contactRepository "OmniLink/internal/modules/contact/domain/repository"
+	userRepository "OmniLink/internal/modules/user/domain/repository"
 )
 
 // ContactToolHandler 好友/联系人工具处理器
 type ContactToolHandler struct {
 	contactSvc contactService.ContactService
 	groupSvc   contactService.GroupService
+	userRepo   userRepository.UserInfoRepository
+	groupRepo  contactRepository.GroupInfoRepository
 }
 
 // NewContactToolHandler 创建 ContactToolHandler
-func NewContactToolHandler(contactSvc contactService.ContactService, groupSvc contactService.GroupService) *ContactToolHandler {
+func NewContactToolHandler(
+	contactSvc contactService.ContactService,
+	groupSvc contactService.GroupService,
+	userRepo userRepository.UserInfoRepository,
+	groupRepo contactRepository.GroupInfoRepository,
+) *ContactToolHandler {
 	return &ContactToolHandler{
 		contactSvc: contactSvc,
 		groupSvc:   groupSvc,
+		userRepo:   userRepo,
+		groupRepo:  groupRepo,
 	}
 }
 
@@ -73,6 +84,22 @@ func (h *ContactToolHandler) RegisterTools(s *server.MCPServer) {
 		mcp.WithString("group_id", mcp.Required(), mcp.Description("群组ID（必填）")),
 	)
 	s.AddTool(getGroupMembersTool, h.handleGetGroupMembers)
+
+	// 注册 contact_search_users 工具
+	searchUsersTool := mcp.NewTool("contact_search_users",
+		mcp.WithDescription("根据用户昵称或用户名模糊搜索用户，用于查找联系人。返回用户ID、昵称、头像等JSON数据"),
+		mcp.WithString("keyword", mcp.Required(), mcp.Description("搜索关键词（昵称或用户名，必填）")),
+		mcp.WithNumber("limit", mcp.Description("返回结果数量限制（可选，默认10，最多50）")),
+	)
+	s.AddTool(searchUsersTool, h.handleSearchUsers)
+
+	// 注册 contact_search_groups 工具
+	searchGroupsTool := mcp.NewTool("contact_search_groups",
+		mcp.WithDescription("根据群组名称模糊搜索群组。返回群组ID、名称、头像等JSON数据"),
+		mcp.WithString("keyword", mcp.Required(), mcp.Description("搜索关键词（群名，必填）")),
+		mcp.WithNumber("limit", mcp.Description("返回结果数量限制（可选，默认10，最多50）")),
+	)
+	s.AddTool(searchGroupsTool, h.handleSearchGroups)
 }
 
 // handleListFriends 处理获取好友列表
@@ -265,4 +292,88 @@ func (h *ContactToolHandler) handleGetGroupMembers(ctx context.Context, request 
 
 	zlog.Info("group_get_members result", zap.String("group_id", groupID), zap.Int("count", len(members)))
 	return mcp.NewToolResultJSON(members)
+}
+
+// handleSearchUsers 处理搜索用户
+func (h *ContactToolHandler) handleSearchUsers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("contact_search_users invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
+	keyword, ok := args["keyword"].(string)
+	if !ok || strings.TrimSpace(keyword) == "" {
+		zlog.Error("contact_search_users missing keyword")
+		return mcp.NewToolResultError("keyword is required"), nil
+	}
+
+	// 处理 limit 参数
+	limit := 10 // 默认值
+	if limitVal, ok := args["limit"]; ok {
+		if limitFloat, ok := limitVal.(float64); ok {
+			limit = int(limitFloat)
+		}
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50 // 最大限制
+	}
+
+	zlog.Info("contact_search_users start", zap.String("keyword", keyword), zap.Int("limit", limit))
+
+	users, err := h.userRepo.SearchUsersByNickname(keyword, limit)
+	if err != nil {
+		zlog.Error("contact_search_users query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("搜索用户失败：%v", err)), nil
+	}
+
+	zlog.Info("contact_search_users result", zap.String("keyword", keyword), zap.Int("count", len(users)))
+	return mcp.NewToolResultJSON(users)
+}
+
+// handleSearchGroups 处理搜索群组
+func (h *ContactToolHandler) handleSearchGroups(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var args map[string]interface{}
+	var ok bool
+
+	if args, ok = request.Params.Arguments.(map[string]interface{}); !ok {
+		zlog.Error("contact_search_groups invalid arguments type")
+		return mcp.NewToolResultError("invalid arguments format, expected map"), nil
+	}
+
+	keyword, ok := args["keyword"].(string)
+	if !ok || strings.TrimSpace(keyword) == "" {
+		zlog.Error("contact_search_groups missing keyword")
+		return mcp.NewToolResultError("keyword is required"), nil
+	}
+
+	// 处理 limit 参数
+	limit := 10 // 默认值
+	if limitVal, ok := args["limit"]; ok {
+		if limitFloat, ok := limitVal.(float64); ok {
+			limit = int(limitFloat)
+		}
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50 // 最大限制
+	}
+
+	zlog.Info("contact_search_groups start", zap.String("keyword", keyword), zap.Int("limit", limit))
+
+	groups, err := h.groupRepo.SearchGroupsByName(keyword, limit)
+	if err != nil {
+		zlog.Error("contact_search_groups query failed", zap.Error(err))
+		return mcp.NewToolResultError(fmt.Sprintf("搜索群组失败：%v", err)), nil
+	}
+
+	zlog.Info("contact_search_groups result", zap.String("keyword", keyword), zap.Int("count", len(groups)))
+	return mcp.NewToolResultJSON(groups)
 }

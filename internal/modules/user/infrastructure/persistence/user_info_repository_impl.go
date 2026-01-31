@@ -102,3 +102,43 @@ func (r *userInfoRepositoryImpl) GetUserContactInfoByUUIDs(uuids []string) ([]co
 	}
 	return users, nil
 }
+
+// SearchUsersByNickname 根据昵称模糊搜索用户（支持用户名降级）
+func (r *userInfoRepositoryImpl) SearchUsersByNickname(keyword string, limit int) ([]entity.UserBrief, error) {
+	if keyword == "" {
+		return []entity.UserBrief{}, nil
+	}
+	if limit <= 0 {
+		limit = 10 // 默认限制10条
+	}
+
+	var users []entity.UserBrief
+	// 模糊搜索昵称或用户名，status=0表示正常用户
+	err := r.db.Model(&entity.UserInfo{}).
+		Select("uuid", "username", "nickname", "avatar", "status").
+		Where("status = 0 AND (nickname LIKE ? OR username LIKE ?)", "%"+keyword+"%", "%"+keyword+"%").
+		Limit(limit).
+		Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+// FindUserByExactNickname 根据精确昵称查找用户（支持用户名降级）
+func (r *userInfoRepositoryImpl) FindUserByExactNickname(nickname string) (*entity.UserBrief, error) {
+	if nickname == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var user entity.UserBrief
+	// 优先按昵称精确匹配，如果没有则按用户名精确匹配
+	err := r.db.Model(&entity.UserInfo{}).
+		Select("uuid", "username", "nickname", "avatar", "status").
+		Where("status = 0 AND (nickname = ? OR username = ?)", nickname, nickname).
+		First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}

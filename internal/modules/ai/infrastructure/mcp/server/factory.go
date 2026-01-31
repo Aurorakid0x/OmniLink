@@ -6,6 +6,8 @@ import (
 	mcpHandlers "OmniLink/internal/modules/ai/infrastructure/mcp/server/handlers"
 	chatService "OmniLink/internal/modules/chat/application/service"
 	contactService "OmniLink/internal/modules/contact/application/service"
+	contactRepository "OmniLink/internal/modules/contact/domain/repository"
+	userRepository "OmniLink/internal/modules/user/domain/repository"
 )
 
 // BuiltinServerConfig 内置服务器配置
@@ -24,6 +26,8 @@ type BuiltinServerDependencies struct {
 	GroupSvc   contactService.GroupService
 	MessageSvc chatService.MessageService
 	SessionSvc chatService.SessionService
+	UserRepo   userRepository.UserInfoRepository
+	GroupRepo  contactRepository.GroupInfoRepository
 }
 
 // NewBuiltinMCPServer 创建并配置内置 MCP Server
@@ -36,8 +40,8 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 	)
 
 	// 注册工具
-	if conf.EnableContactTools && deps.ContactSvc != nil && deps.GroupSvc != nil {
-		contactHandler := mcpHandlers.NewContactToolHandler(deps.ContactSvc, deps.GroupSvc)
+	if conf.EnableContactTools && deps.ContactSvc != nil && deps.GroupSvc != nil && deps.UserRepo != nil && deps.GroupRepo != nil {
+		contactHandler := mcpHandlers.NewContactToolHandler(deps.ContactSvc, deps.GroupSvc, deps.UserRepo, deps.GroupRepo)
 		contactHandler.RegisterTools(s)
 	}
 

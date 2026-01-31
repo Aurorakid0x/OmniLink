@@ -54,3 +54,38 @@ func (r *groupInfoRepositoryImpl) ListJoinedGroups(userID string) ([]entity.Grou
 	}
 	return groups, nil
 }
+
+// SearchGroupsByName 根据群名模糊搜索群组
+func (r *groupInfoRepositoryImpl) SearchGroupsByName(keyword string, limit int) ([]entity.GroupInfo, error) {
+	if keyword == "" {
+		return []entity.GroupInfo{}, nil
+	}
+	if limit <= 0 {
+		limit = 10 // 默认限制10条
+	}
+
+	var groups []entity.GroupInfo
+	// 模糊搜索群名，status=0表示正常群组
+	err := r.db.Where("status = 0 AND name LIKE ?", "%"+keyword+"%").
+		Limit(limit).
+		Find(&groups).Error
+	if err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
+// FindGroupByExactName 根据精确群名查找群组
+func (r *groupInfoRepositoryImpl) FindGroupByExactName(name string) (*entity.GroupInfo, error) {
+	if name == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var group entity.GroupInfo
+	// 精确匹配群名
+	err := r.db.Where("status = 0 AND name = ?", name).First(&group).Error
+	if err != nil {
+		return nil, err
+	}
+	return &group, nil
+}
