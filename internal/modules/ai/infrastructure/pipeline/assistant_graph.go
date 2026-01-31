@@ -38,6 +38,10 @@ type assistantState struct {
 	LLMMs         int64
 	Tools         []*schema.ToolInfo
 	Err           error
+	// ReAct 循环控制
+	IterationCount int             // 当前循环次数
+	MaxIterations  int             // 最大循环次数（默认10）
+	LastResponse   *schema.Message // 最后一次LLM响应
 }
 
 const defaultPersonaPrompt = "你是 OmniLink 的全局 AI 个人助手，回答必须基于用户权限内的聊天/联系人/群组信息。"
@@ -45,9 +49,11 @@ const defaultPersonaPrompt = "你是 OmniLink 的全局 AI 个人助手，回答
 // Node 1: LoadMemory - 加载历史消息
 func (p *AssistantPipeline) loadMemoryNode(ctx context.Context, req *AssistantRequest, _ ...any) (*assistantState, error) {
 	st := &assistantState{
-		Req:     req,
-		Start:   time.Now(),
-		QueryID: fmt.Sprintf("q_%s_%d", util.GenerateID("Q"), time.Now().UnixNano()),
+		Req:            req,
+		Start:          time.Now(),
+		QueryID:        fmt.Sprintf("q_%s_%d", util.GenerateID("Q"), time.Now().UnixNano()),
+		MaxIterations:  10, // 默认最多10轮ReAct循环
+		IterationCount: 0,
 	}
 
 	// 1. 校验必填参数
@@ -203,7 +209,7 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 		userName = st.Req.TenantUserID
 	}
 	promptMsgs = append(promptMsgs, schema.Message{
-		Role: schema.System,
+		Role:    schema.System,
 		Content: fmt.Sprintf("### 用户上下文\n用户ID: %s\n用户名称: %s\n你可以使用以上已提供的用户信息来回答与该用户相关的问题，但不得臆造未提供的信息。", st.Req.TenantUserID, userName),
 	})
 
@@ -303,7 +309,7 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 	return st, nil
 }
 
-// Node 4: ChatModel - 调用LLM（非流式）
+// Node 4: ChatModel - 调用LLM（ReAct模式：只调用LLM，不执行工具）
 func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantState, _ ...any) (*assistantState, error) {
 	if st == nil || st.Err != nil {
 		return st, nil
@@ -316,106 +322,129 @@ func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantStat
 		promptMsgs[i] = &st.PromptMsgs[i]
 	}
 
-	// 第一次调用 LLM，传入工具定义
-	resp, err := p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
+	// 调用 LLM（传入工具定义）
+	var resp *schema.Message
+	var err error
+	if len(st.Tools) > 0 {
+		resp, err = p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
+	} else {
+		resp, err = p.chatModel.Generate(ctx, promptMsgs)
+	}
 	if err != nil {
 		st.Err = err
 		return st, nil
 	}
 
-	if len(p.tools) > 0 && len(resp.ToolCalls) > 0 {
-		st.PromptMsgs = append(st.PromptMsgs, *resp)
-		for _, toolCall := range resp.ToolCalls {
-			// 解析工具调用
-			toolName := toolCall.Function.Name
-			toolArgs := toolCall.Function.Arguments
+	// 保存LLM响应到state（不管是否有tool call）
+	st.LastResponse = resp
+	st.PromptMsgs = append(st.PromptMsgs, *resp)
 
-			// 查找并执行工具
-			var toolResp string
-			var found bool
+	// 累加LLM耗时
+	st.LLMMs += time.Since(llmStart).Milliseconds()
 
-			for _, t := range p.tools {
-				info, _ := t.Info(ctx)
-				if info.Name == toolName {
-					found = true
-					// 注入租户ID (如果工具需要)
-					// 注意：这里 args 是 JSON 字符串。如果需要注入 tenant_user_id，需要解析->注入->重序列化
-					// 为了简化，假设 MCP Client 已经处理了上下文，或者参数里已经包含了。
-					// 实际上，我们的 contact_list_friends 需要 tenant_user_id。
-					// 在新的架构中，我们应该依赖 LLM 生成 tenant_user_id，或者在 Context 中传递。
-					// 由于 Eino Tool 接口标准，我们最好让 LLM 显式生成 tenant_user_id 参数。
-					// 或者，我们可以在 Tool 实现内部从 Context 获取。
+	// 递增迭代计数
+	st.IterationCount++
 
-					// 尝试执行
-					if invokable, ok := t.(tool.InvokableTool); ok {
-						res, err := invokable.InvokableRun(ctx, toolArgs)
-						if err != nil {
-							toolResp = fmt.Sprintf("Tool execution error: %v", err)
-						} else {
-							toolResp = res
-						}
-					} else {
-						toolResp = "Tool is not invokable"
-					}
-					break
-				}
-			}
-
-			if !found {
-				toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
-			}
-
-			toolCallID := toolCall.ID
-			if toolCallID == "" {
-				toolCallID = toolName
-			}
-
-			st.PromptMsgs = append(st.PromptMsgs, *schema.ToolMessage(toolResp, toolCallID, schema.WithToolName(toolName)))
-		}
-
-		promptMsgs = make([]*schema.Message, len(st.PromptMsgs))
-		for i := range st.PromptMsgs {
-			promptMsgs[i] = &st.PromptMsgs[i]
-		}
-
-		// 第二次调用 LLM，同样传入工具定义（保持上下文一致）
-		resp, err = p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
-		if err != nil {
-			st.Err = err
-			return st, nil
-		}
-	}
-
-	st.Answer = resp.Content
-	st.LLMMs = time.Since(llmStart).Milliseconds()
-
-	if resp.ResponseMeta != nil {
-		usage := resp.ResponseMeta.Usage
-		if usage != nil {
-			st.Tokens = TokenStats{
-				PromptTokens: usage.PromptTokens,
-				AnswerTokens: usage.CompletionTokens,
-				TotalTokens:  usage.TotalTokens,
-			}
-		}
-	}
-
-	zlog.Info("assistant chat model done",
+	zlog.Info("assistant chat model iteration",
 		zap.String("query_id", st.QueryID),
-		zap.Int("answer_len", len(st.Answer)),
-		zap.Int64("llm_ms", st.LLMMs),
-		zap.Int("tokens", st.Tokens.TotalTokens))
+		zap.Int("iteration", st.IterationCount),
+		zap.Int("tool_calls", len(resp.ToolCalls)),
+		zap.Int64("llm_ms", time.Since(llmStart).Milliseconds()))
 
 	return st, nil
 }
 
-// Node 5: Persist - 持久化消息
+// Node 5: Tools - 执行工具调用（ReAct模式新增节点）
+func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _ ...any) (*assistantState, error) {
+	if st == nil || st.Err != nil {
+		return st, nil
+	}
+
+	// 从最后一条消息提取 tool calls
+	if st.LastResponse == nil || len(st.LastResponse.ToolCalls) == 0 {
+		// 没有工具调用，直接返回
+		return st, nil
+	}
+
+	toolStart := time.Now()
+
+	// 执行所有工具调用
+	for _, toolCall := range st.LastResponse.ToolCalls {
+		toolName := toolCall.Function.Name
+		toolArgs := toolCall.Function.Arguments
+
+		var toolResp string
+		var found bool
+
+		// 查找并执行工具
+		for _, t := range p.tools {
+			info, _ := t.Info(ctx)
+			if info != nil && info.Name == toolName {
+				found = true
+				// 执行工具
+				if invokable, ok := t.(tool.InvokableTool); ok {
+					res, err := invokable.InvokableRun(ctx, toolArgs)
+					if err != nil {
+						toolResp = fmt.Sprintf("Tool execution error: %v", err)
+					} else {
+						toolResp = res
+					}
+				} else {
+					toolResp = "Tool is not invokable"
+				}
+				break
+			}
+		}
+
+		if !found {
+			toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
+		}
+
+		// 获取tool call ID
+		toolCallID := toolCall.ID
+		if toolCallID == "" {
+			toolCallID = toolName
+		}
+
+		// 将工具响应添加到消息历史
+		st.PromptMsgs = append(st.PromptMsgs, *schema.ToolMessage(toolResp, toolCallID, schema.WithToolName(toolName)))
+
+		zlog.Info("assistant tool executed",
+			zap.String("query_id", st.QueryID),
+			zap.String("tool_name", toolName),
+			zap.Int("response_len", len(toolResp)))
+	}
+
+	zlog.Info("assistant tools node done",
+		zap.String("query_id", st.QueryID),
+		zap.Int("tools_executed", len(st.LastResponse.ToolCalls)),
+		zap.Int64("tools_ms", time.Since(toolStart).Milliseconds()))
+
+	return st, nil
+}
+
+// Node 6: Persist - 持久化消息（ReAct模式：从LastResponse提取最终答案）
 func (p *AssistantPipeline) persistNode(ctx context.Context, st *assistantState, _ ...any) (*AssistantResult, error) {
 	if st == nil {
 		return &AssistantResult{Err: fmt.Errorf("nil state")}, nil
 	}
 	if st.Err != nil {
 		return p.buildFinalResult(st), nil
+	}
+
+	// 从LastResponse提取最终答案和token统计
+	if st.LastResponse != nil {
+		st.Answer = st.LastResponse.Content
+		if st.LastResponse.ResponseMeta != nil {
+			usage := st.LastResponse.ResponseMeta.Usage
+			if usage != nil {
+				st.Tokens = TokenStats{
+					PromptTokens: usage.PromptTokens,
+					AnswerTokens: usage.CompletionTokens,
+					TotalTokens:  usage.TotalTokens,
+				}
+			}
+		}
 	}
 
 	now := time.Now()
@@ -468,7 +497,8 @@ func (p *AssistantPipeline) persistNode(ctx context.Context, st *assistantState,
 
 	zlog.Info("assistant persist done",
 		zap.String("session_id", st.SessionID),
-		zap.String("query_id", st.QueryID))
+		zap.String("query_id", st.QueryID),
+		zap.Int("total_iterations", st.IterationCount))
 
 	return p.buildFinalResult(st), nil
 }

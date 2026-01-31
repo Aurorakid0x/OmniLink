@@ -118,7 +118,7 @@ func (p *AssistantPipeline) Execute(ctx context.Context, req *AssistantRequest) 
 	return p.r.Invoke(ctx, req)
 }
 
-// ExecuteStream 执行Assistant Pipeline（流式）返回StreamReader
+// ExecuteStream 执行Assistant Pipeline（流式 + ReAct循环）
 func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantRequest) (*schema.StreamReader[*schema.Message], *assistantState, error) {
 	if req == nil {
 		return nil, nil, fmt.Errorf("request is nil")
@@ -142,63 +142,44 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 		return nil, nil, getError(err, st.Err)
 	}
 
-	// Node 4: ChatModel (返回StreamReader)
+	// ReAct 循环：ChatModel <-> Tools，直到没有 tool call
+	for {
+		// Node 4: ChatModel
+		st, err = p.chatModelNode(ctx, st)
+		if err != nil || st.Err != nil {
+			return nil, nil, getError(err, st.Err)
+		}
+
+		// 检查是否需要执行工具
+		hasToolCalls := st.LastResponse != nil && len(st.LastResponse.ToolCalls) > 0
+		reachedMaxIterations := st.IterationCount >= st.MaxIterations
+
+		if !hasToolCalls || reachedMaxIterations {
+			// 没有工具调用或达到最大迭代次数，退出循环
+			break
+		}
+
+		// Node 5: Tools
+		st, err = p.toolsNode(ctx, st)
+		if err != nil || st.Err != nil {
+			return nil, nil, getError(err, st.Err)
+		}
+
+		// 继续循环，再次调用 ChatModel
+	}
+
+	// 最后一次 LLM 调用使用流式返回
 	promptMsgs := make([]*schema.Message, len(st.PromptMsgs))
 	for i := range st.PromptMsgs {
 		promptMsgs[i] = &st.PromptMsgs[i]
 	}
 
-	if len(p.tools) > 0 {
-		resp, err := p.chatModel.Generate(ctx, promptMsgs, model.WithTools(st.Tools))
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if len(resp.ToolCalls) > 0 {
-			st.PromptMsgs = append(st.PromptMsgs, *resp)
-			for _, toolCall := range resp.ToolCalls {
-				toolName := toolCall.Function.Name
-				toolArgs := toolCall.Function.Arguments
-
-				var toolResp string
-				var found bool
-				for _, t := range p.tools {
-					info, _ := t.Info(ctx)
-					if info != nil && info.Name == toolName {
-						found = true
-						if invokable, ok := t.(tool.InvokableTool); ok {
-							res, err := invokable.InvokableRun(ctx, toolArgs)
-							if err != nil {
-								toolResp = fmt.Sprintf("Tool execution error: %v", err)
-							} else {
-								toolResp = res
-							}
-						} else {
-							toolResp = "Tool is not invokable"
-						}
-						break
-					}
-				}
-				if !found {
-					toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
-				}
-
-				toolCallID := toolCall.ID
-				if toolCallID == "" {
-					toolCallID = toolName
-				}
-
-				st.PromptMsgs = append(st.PromptMsgs, *schema.ToolMessage(toolResp, toolCallID, schema.WithToolName(toolName)))
-			}
-
-			promptMsgs = make([]*schema.Message, len(st.PromptMsgs))
-			for i := range st.PromptMsgs {
-				promptMsgs[i] = &st.PromptMsgs[i]
-			}
-		}
+	var streamReader *schema.StreamReader[*schema.Message]
+	if len(st.Tools) > 0 {
+		streamReader, err = p.chatModel.Stream(ctx, promptMsgs, model.WithTools(st.Tools))
+	} else {
+		streamReader, err = p.chatModel.Stream(ctx, promptMsgs)
 	}
-
-	streamReader, err := p.chatModel.Stream(ctx, promptMsgs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -220,29 +201,61 @@ func (p *AssistantPipeline) PersistStreamResult(ctx context.Context, st *assista
 	return result, nil
 }
 
-// buildGraph 构建Eino Graph（5个节点）
+// buildGraph 构建Eino Graph（ReAct模式：ChatModel <-> Tools 循环）
 func (p *AssistantPipeline) buildGraph(ctx context.Context) (compose.Runnable[*AssistantRequest, *AssistantResult], error) {
 	const (
 		LoadMemory  = "LoadMemory"
 		Retrieve    = "Retrieve"
 		BuildPrompt = "BuildPrompt"
 		ChatModel   = "ChatModel"
+		Tools       = "Tools"
 		Persist     = "Persist"
 	)
 
 	g := compose.NewGraph[*AssistantRequest, *AssistantResult]()
 
+	// 添加所有节点
 	_ = g.AddLambdaNode(LoadMemory, compose.InvokableLambdaWithOption(p.loadMemoryNode), compose.WithNodeName(LoadMemory))
 	_ = g.AddLambdaNode(Retrieve, compose.InvokableLambdaWithOption(p.retrieveNode), compose.WithNodeName(Retrieve))
 	_ = g.AddLambdaNode(BuildPrompt, compose.InvokableLambdaWithOption(p.buildPromptNode), compose.WithNodeName(BuildPrompt))
 	_ = g.AddLambdaNode(ChatModel, compose.InvokableLambdaWithOption(p.chatModelNode), compose.WithNodeName(ChatModel))
+	_ = g.AddLambdaNode(Tools, compose.InvokableLambdaWithOption(p.toolsNode), compose.WithNodeName(Tools))
 	_ = g.AddLambdaNode(Persist, compose.InvokableLambdaWithOption(p.persistNode), compose.WithNodeName(Persist))
 
+	// 前置流程（线性）
 	_ = g.AddEdge(compose.START, LoadMemory)
 	_ = g.AddEdge(LoadMemory, Retrieve)
 	_ = g.AddEdge(Retrieve, BuildPrompt)
 	_ = g.AddEdge(BuildPrompt, ChatModel)
-	_ = g.AddEdge(ChatModel, Persist)
+
+	// ReAct 循环分支：ChatModel 之后根据条件选择下一步
+	// - 如果有 tool calls 且未超过最大迭代次数 → Tools
+	// - 否则 → Persist
+	shouldCallTools := func(ctx context.Context, st *assistantState) (string, error) {
+		// 检查是否有工具调用
+		hasToolCalls := st.LastResponse != nil && len(st.LastResponse.ToolCalls) > 0
+		// 检查是否达到最大迭代次数
+		reachedMaxIterations := st.IterationCount >= st.MaxIterations
+
+		if hasToolCalls && !reachedMaxIterations {
+			return Tools, nil
+		}
+		return Persist, nil
+	}
+
+	// 创建分支：endNodes 指定可能的目标节点
+	branch := compose.NewGraphBranch(shouldCallTools, map[string]bool{
+		Tools:   true,
+		Persist: true,
+	})
+
+	// 将分支添加到 ChatModel 之后
+	_ = g.AddBranch(ChatModel, branch)
+
+	// Tools 节点执行完后回到 ChatModel（形成循环）
+	_ = g.AddEdge(Tools, ChatModel)
+
+	// Persist 节点连接到 END
 	_ = g.AddEdge(Persist, compose.END)
 
 	return g.Compile(ctx, compose.WithGraphName("AssistantPipeline"), compose.WithNodeTriggerMode(compose.AllPredecessor))
