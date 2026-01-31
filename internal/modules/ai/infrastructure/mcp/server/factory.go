@@ -47,6 +47,11 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 
 	// TODO: 注册其他工具
 	// if conf.EnableGroupTools && deps.GroupSvc != nil { ... }
+	// ✨ 注册操作类工具(新增)
+	if conf.EnableContactTools && deps.ContactSvc != nil && deps.GroupSvc != nil {
+		actionHandler := mcpHandlers.NewContactActionToolHandler(deps.ContactSvc, deps.GroupSvc)
+		actionHandler.RegisterTools(s)
+	}
 
 	return s
 }

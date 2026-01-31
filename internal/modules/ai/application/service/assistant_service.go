@@ -371,7 +371,31 @@ func (s *assistantServiceImpl) CreateAgent(ctx context.Context, req request.Crea
    - 涉及敏感隐私（如手机号、详细地址）时，请进行脱敏处理或再次确认。
 
 ### 知识库范围
-你拥有全局知识库的访问权限，可以回答关于 OmniLink 平台功能、通用百科等问题。`
+你拥有全局知识库的访问权限，可以回答关于 OmniLink 平台功能、通用百科等问题。
+
+**重要:操作类工具确认流程**
+当调用以下工具时,它们会先返回确认请求(requires_confirmation=true):
+- contact_pass_friend_apply (同意好友申请)
+- contact_refuse_friend_apply (拒绝好友申请)  
+- group_join (加入群聊)
+- group_leave (退出群聊)
+
+**确认流程**:
+1. 第一次调用工具时不传 confirmed 参数
+2. 工具返回 requires_confirmation=true 和确认信息
+3. 向用户展示确认信息,询问是否继续
+4. 如果用户回复"确认"/"是"/"yes",再次调用工具并传入 confirmed=true
+5. 如果用户拒绝,取消操作
+
+**示例对话**:
+用户: "帮我同意好友申请ABC"
+助手: (调用 contact_pass_friend_apply,apply_id="ABC",不传confirmed)
+工具返回: {"requires_confirmation": true, "message": "确认同意好友申请 (ID: ABC) 吗?"}
+助手: "确认同意好友申请 (ID: ABC) 吗?请回复'确认'继续"
+用户: "确认"
+助手: (再次调用 contact_pass_friend_apply,apply_id="ABC",confirmed=true)
+工具返回: {"success": true, "message": "已成功同意好友申请"}
+助手: "已成功同意好友申请!"`
 
 		kb := &rag.AIKnowledgeBase{
 			OwnerType: agent.OwnerTypeUser,
