@@ -119,32 +119,31 @@ func (p *AssistantPipeline) Execute(ctx context.Context, req *AssistantRequest) 
 }
 
 // ExecuteStream 执行Assistant Pipeline（流式 + ReAct循环）
+// 注意：流式模式下，手动执行 ReAct 循环，最后一次 LLM 调用使用流式返回
 func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantRequest) (*schema.StreamReader[*schema.Message], *assistantState, error) {
 	if req == nil {
 		return nil, nil, fmt.Errorf("request is nil")
 	}
 
-	// 手动执行前3个节点
+	// 手动执行前3个节点（不参与循环）
 	st, err := p.loadMemoryNode(ctx, req)
 	if err != nil || st.Err != nil {
 		return nil, nil, getError(err, st.Err)
 	}
 
-	// Node 2: Retrieve
 	st, err = p.retrieveNode(ctx, st)
 	if err != nil || st.Err != nil {
 		return nil, nil, getError(err, st.Err)
 	}
 
-	// Node 3: BuildPrompt
 	st, err = p.buildPromptNode(ctx, st)
 	if err != nil || st.Err != nil {
 		return nil, nil, getError(err, st.Err)
 	}
 
-	// ReAct 循环：ChatModel <-> Tools，直到没有 tool call
+	// ReAct 循环：ChatModel ↔ Tools（非流式），直到没有 tool call
 	for {
-		// Node 4: ChatModel
+		// 调用 ChatModel（非流式，用于检查是否需要工具）
 		st, err = p.chatModelNode(ctx, st)
 		if err != nil || st.Err != nil {
 			return nil, nil, getError(err, st.Err)
@@ -159,7 +158,7 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 			break
 		}
 
-		// Node 5: Tools
+		// 执行工具
 		st, err = p.toolsNode(ctx, st)
 		if err != nil || st.Err != nil {
 			return nil, nil, getError(err, st.Err)
@@ -168,7 +167,7 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 		// 继续循环，再次调用 ChatModel
 	}
 
-	// 最后一次 LLM 调用使用流式返回
+	// 最后一次 LLM 调用使用流式返回（用于实时输出最终答案）
 	promptMsgs := make([]*schema.Message, len(st.PromptMsgs))
 	for i := range st.PromptMsgs {
 		promptMsgs[i] = &st.PromptMsgs[i]
@@ -258,7 +257,16 @@ func (p *AssistantPipeline) buildGraph(ctx context.Context) (compose.Runnable[*A
 	// Persist 节点连接到 END
 	_ = g.AddEdge(Persist, compose.END)
 
-	return g.Compile(ctx, compose.WithGraphName("AssistantPipeline"), compose.WithNodeTriggerMode(compose.AllPredecessor))
+	// 编译 Graph：设置 Pregel 模式允许循环
+	// WithNodeTriggerMode(AnyPredecessor) 启用 Pregel 模式，支持循环图
+	// WithMaxRunSteps 限制最大执行步数，防止无限循环
+	// 每轮循环 = ChatModel + Tools (2步)，默认最多10轮 = 20步
+	// 加上前置节点(LoadMemory, Retrieve, BuildPrompt)和后置节点(Persist) = 20 + 4 = 24步
+	maxSteps := 24
+	return g.Compile(ctx,
+		compose.WithGraphName("AssistantPipeline"),
+		compose.WithNodeTriggerMode(compose.AnyPredecessor), // Pregel 模式，允许循环
+		compose.WithMaxRunSteps(maxSteps))
 }
 
 func (p *AssistantPipeline) buildFinalResult(st *assistantState) *AssistantResult {
