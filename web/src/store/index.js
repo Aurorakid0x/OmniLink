@@ -213,6 +213,18 @@ export default createStore({
         state.aiMessages[sessionId] = []
       }
       state.aiMessages[sessionId].push(message)
+    },
+    updateAIMessage(state, { sessionId, index, message }) {
+      if (!state.aiMessages[sessionId]) {
+        state.aiMessages[sessionId] = []
+      }
+      state.aiMessages[sessionId].splice(index, 1, message)
+    },
+    removeAIMessageAt(state, { sessionId, index }) {
+      if (!state.aiMessages[sessionId]) {
+        return
+      }
+      state.aiMessages[sessionId].splice(index, 1)
     }
   },
   actions: {
@@ -379,11 +391,10 @@ export default createStore({
     
     // 发送AI消息（调用AI聊天API）
     async sendAIMessage({ commit, state }, { sessionId, question, agentId }) {
-      // 导入需要用到的API
       const { chatStream } = await import('../api/ai')
+      const renderOnDoneOnly = true
       
       try {
-        // 先添加用户消息到UI
         const userMessage = {
           role: 'user',
           content: question,
@@ -391,7 +402,6 @@ export default createStore({
         }
         commit('appendAIMessage', { sessionId, message: userMessage })
         
-        // 调用流式AI API
         const response = await chatStream({
           question,
           session_id: sessionId,
@@ -414,6 +424,8 @@ export default createStore({
         commit('appendAIMessage', { sessionId, message: assistantMessage })
         
         let currentEvent = ''
+        let lastToken = ''
+        const normalizeToken = (value) => (value || '').replace(/\s+/g, '')
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
@@ -438,29 +450,39 @@ export default createStore({
               const data = JSON.parse(dataStr)
               
               if (currentEvent === 'delta') {
-                const token = data.token || ''
-                assistantMessage.content += token
-                // 更新最后一条消息
-                const messages = state.aiMessages[sessionId]
-                if (messages && messages.length > msgIndex) {
-                  messages[msgIndex] = { ...assistantMessage }
+                if (renderOnDoneOnly) {
+                  if (assistantMessage.content !== 'AI正在思考...') {
+                    assistantMessage.content = 'AI正在思考...'
+                    commit('updateAIMessage', { sessionId, index: msgIndex, message: { ...assistantMessage } })
+                  }
+                  continue
                 }
+                const token = data.token || ''
+                if (token && token !== lastToken) {
+                  const normalizedToken = normalizeToken(token)
+                  const normalizedCurrent = normalizeToken(assistantMessage.content)
+                  const tokenLooksFull = token.length >= assistantMessage.content.length && (normalizedToken.startsWith(normalizedCurrent) || normalizedToken.includes(normalizedCurrent) || token.length > assistantMessage.content.length * 1.5)
+                  if (tokenLooksFull) {
+                    assistantMessage.content = token
+                  } else {
+                    assistantMessage.content += token
+                  }
+                  lastToken = token
+                }
+                commit('updateAIMessage', { sessionId, index: msgIndex, message: { ...assistantMessage } })
               } else if (currentEvent === 'done') {
+                if (data.answer) {
+                  assistantMessage.content = data.answer
+                } else if (renderOnDoneOnly && assistantMessage.content === 'AI正在思考...') {
+                  assistantMessage.content = ''
+                }
                 if (data.citations) {
                   assistantMessage.citations = data.citations
                 }
-                // 最终更新
-                const messages = state.aiMessages[sessionId]
-                if (messages && messages.length > msgIndex) {
-                  messages[msgIndex] = { ...assistantMessage }
-                }
+                commit('updateAIMessage', { sessionId, index: msgIndex, message: { ...assistantMessage } })
               } else if (currentEvent === 'error') {
                 console.error('AI chat error:', data.error)
-                // 移除占位消息
-                const messages = state.aiMessages[sessionId]
-                if (messages && messages.length > msgIndex) {
-                  messages.splice(msgIndex, 1)
-                }
+                commit('removeAIMessageAt', { sessionId, index: msgIndex })
                 throw new Error(data.error || 'AI chat failed')
               }
             } catch (parseErr) {

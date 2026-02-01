@@ -214,6 +214,8 @@ func init() {
 					GroupSvc:   groupSvc,
 					MessageSvc: messageSvc,
 					SessionSvc: sessionSvc,
+					UserRepo:   userRepo,
+					GroupRepo:  groupRepo,
 				},
 			)
 
