@@ -1,6 +1,8 @@
 package persistence
 
 import (
+	"time"
+
 	"OmniLink/internal/modules/contact/domain/entity"
 	"OmniLink/internal/modules/contact/domain/repository"
 
@@ -60,7 +62,7 @@ func (r *userContactRepositoryImpl) ListContactsWithInfo(userID string) ([]entit
 
 func (r *userContactRepositoryImpl) GetGroupMembers(groupID string) ([]entity.UserContact, error) {
 	var contacts []entity.UserContact
-	err := r.db.Where("contact_id = ? AND contact_type = ? AND deleted_at IS NULL AND status NOT IN ?", groupID, 1, []int8{6, 7}).Find(&contacts).Error
+	err := r.db.Where("contact_id = ? AND contact_type = ? AND deleted_at IS NULL AND status NOT IN ?", groupID, 1, []int8{6, 7, 8}).Find(&contacts).Error
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +76,7 @@ func (r *userContactRepositoryImpl) GetGroupMembersWithInfo(groupID string) ([]e
 	err := r.db.Table("user_contact").
 		Select("user_contact.*, user_info.nickname, user_info.avatar, user_info.signature").
 		Joins("JOIN user_info ON user_contact.user_id = user_info.uuid").
-		Where("user_contact.contact_id = ? AND user_contact.contact_type = 1 AND user_contact.deleted_at IS NULL AND user_contact.status NOT IN ?", groupID, []int8{6, 7}).
+		Where("user_contact.contact_id = ? AND user_contact.contact_type = 1 AND user_contact.deleted_at IS NULL AND user_contact.status NOT IN ?", groupID, []int8{6, 7, 8}).
 		Find(&members).Error
 	if err != nil {
 		return nil, err
@@ -95,5 +97,14 @@ func (r *userContactRepositoryImpl) UpdateUserContact(contact *entity.UserContac
 			"contact_type": contact.ContactType,
 			"status":       contact.Status,
 			"update_at":    contact.UpdateAt,
+		}).Error
+}
+
+func (r *userContactRepositoryImpl) UpdateGroupContactsStatus(groupID string, status int8, updateAt time.Time) error {
+	return r.db.Model(&entity.UserContact{}).
+		Where("contact_id = ? AND contact_type = ? AND deleted_at IS NULL", groupID, 1).
+		Updates(map[string]interface{}{
+			"status":    status,
+			"update_at": updateAt,
 		}).Error
 }

@@ -47,7 +47,7 @@ func (r *groupInfoRepositoryImpl) ListJoinedGroups(userID string) ([]entity.Grou
 	// user_contact.contact_id -> group_info.uuid
 	err := r.db.Table("group_info").
 		Joins("JOIN user_contact ON group_info.uuid = user_contact.contact_id").
-		Where("user_contact.user_id = ? AND user_contact.contact_type = 1 AND user_contact.status NOT IN ?", userID, []int8{6, 7}). // 6: quit, 7: kicked
+		Where("user_contact.user_id = ? AND user_contact.contact_type = 1 AND user_contact.status NOT IN ? AND group_info.status = 0", userID, []int8{6, 7, 8}).
 		Find(&groups).Error
 	if err != nil {
 		return nil, err

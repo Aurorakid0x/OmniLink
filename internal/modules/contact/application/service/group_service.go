@@ -504,6 +504,18 @@ func (s *groupServiceImpl) DismissGroup(req contactRequest.DismissGroupRequest) 
 		return err
 	}
 
+	if groupID != "" {
+		go func(gid string) {
+			updateAt := time.Now()
+			updateErr := s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, _ contactRepository.GroupInfoRepository) error {
+				return contactRepo.UpdateGroupContactsStatus(gid, 8, updateAt)
+			})
+			if updateErr != nil {
+				zlog.Error(updateErr.Error())
+			}
+		}(groupID)
+	}
+
 	if s.aiIngest != nil {
 		for _, uid := range members {
 			if strings.TrimSpace(uid) == "" {

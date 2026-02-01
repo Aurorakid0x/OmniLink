@@ -148,11 +148,24 @@ func (s *contactServiceImpl) LoadMyJoinedGroup(req contactRequest.LoadMyJoinedGr
 	}
 
 	var items []contactRespond.JoinedGroupItem
-	err = s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, _ contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
+	now := time.Now()
+	err = s.uow.Transaction(func(_ contactRepository.ContactApplyRepository, contactRepo contactRepository.UserContactRepository, groupRepo contactRepository.GroupInfoRepository) error {
 		for _, gid := range groupIDs {
 			info, err := groupRepo.GetGroupInfoByUUID(gid)
 			if err != nil {
-				// 忽略单个查询错误
+				continue
+			}
+			if info.Status != 0 {
+				if info.Status == 2 {
+					rel, err := contactRepo.GetUserContactByUserIDAndContactIDAndType(req.OwnerId, gid, 1)
+					if err == nil && rel.Status != 8 {
+						rel.Status = 8
+						rel.UpdateAt = now
+						if err := contactRepo.UpdateUserContact(rel); err != nil {
+							zlog.Error(err.Error())
+						}
+					}
+				}
 				continue
 			}
 			items = append(items, contactRespond.JoinedGroupItem{

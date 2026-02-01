@@ -1,6 +1,10 @@
 package repository
 
-import "OmniLink/internal/modules/contact/domain/entity"
+import (
+	"time"
+
+	"OmniLink/internal/modules/contact/domain/entity"
+)
 
 type UserContactRepository interface {
 	GetUserContactsByUserID(userID string) ([]entity.UserContact, error)
@@ -11,4 +15,5 @@ type UserContactRepository interface {
 	GetGroupMembersWithInfo(groupID string) ([]entity.ContactWithUserInfo, error)
 	CreateUserContact(contact *entity.UserContact) error
 	UpdateUserContact(contact *entity.UserContact) error
+	UpdateGroupContactsStatus(groupID string, status int8, updateAt time.Time) error
 }
