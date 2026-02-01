@@ -414,15 +414,38 @@ export default createStore({
         let buffer = ''
         let assistantMessage = {
           role: 'assistant',
-          content: '',
+          content: '正在努力理解你的问题…',
           citations: [],
           created_at: new Date().toISOString()
         }
         
-        // 先添加assistant消息占位
         const msgIndex = (state.aiMessages[sessionId] || []).length
         commit('appendAIMessage', { sessionId, message: assistantMessage })
-        
+
+        const statusQueue = []
+        let showingStatus = false
+        let statusTimer = null
+        let toolSeen = false
+        const showStatus = (text, durationMs = 1400) => {
+          if (!text) return
+          statusQueue.push({ text, durationMs })
+          if (showingStatus) return
+          const next = () => {
+            const item = statusQueue.shift()
+            if (!item) {
+              showingStatus = false
+              return
+            }
+            showingStatus = true
+            assistantMessage.content = item.text
+            commit('updateAIMessage', { sessionId, index: msgIndex, message: { ...assistantMessage } })
+            statusTimer = setTimeout(() => {
+              next()
+            }, item.durationMs)
+          }
+          next()
+        }
+
         let currentEvent = ''
         let lastToken = ''
         const normalizeToken = (value) => (value || '').replace(/\s+/g, '')
@@ -449,12 +472,31 @@ export default createStore({
             try {
               const data = JSON.parse(dataStr)
               
-              if (currentEvent === 'delta') {
-                if (renderOnDoneOnly) {
-                  if (assistantMessage.content !== 'AI正在思考...') {
-                    assistantMessage.content = 'AI正在思考...'
-                    commit('updateAIMessage', { sessionId, index: msgIndex, message: { ...assistantMessage } })
+              if (currentEvent === 'thinking') {
+                if (!toolSeen) {
+                  const phase = data.phase || ''
+                  if (phase === 'understand') {
+                    showStatus('正在努力理解你的问题…', 1200)
+                  } else {
+                    showStatus('正在努力思考中……', 1400)
                   }
+                }
+              } else if (currentEvent === 'tool_call') {
+                toolSeen = true
+                const toolName = data.tool_name || data.name || ''
+                const label = toolName ? `正在召唤工具「${toolName}」帮忙…` : '正在调用工具…'
+                showStatus(label, 1600)
+                showStatus('工具正在奔赴现场，请稍候…', 1200)
+              } else if (currentEvent === 'tool_result') {
+                const toolName = data.tool_name || data.name || ''
+                const status = data.status || ''
+                if (status === 'success') {
+                  showStatus(toolName ? `工具「${toolName}」调用成功！正在查看结果…` : '工具调用成功！正在查看结果…', 1800)
+                } else if (status === 'error') {
+                  showStatus(toolName ? `工具「${toolName}」调用失败，正在重新组织思路…` : '工具调用失败，正在重新组织思路…', 1800)
+                }
+              } else if (currentEvent === 'delta') {
+                if (renderOnDoneOnly) {
                   continue
                 }
                 const token = data.token || ''
@@ -471,10 +513,14 @@ export default createStore({
                 }
                 commit('updateAIMessage', { sessionId, index: msgIndex, message: { ...assistantMessage } })
               } else if (currentEvent === 'done') {
+                if (statusTimer) {
+                  clearTimeout(statusTimer)
+                  statusTimer = null
+                }
+                statusQueue.length = 0
+                showingStatus = false
                 if (data.answer) {
                   assistantMessage.content = data.answer
-                } else if (renderOnDoneOnly && assistantMessage.content === 'AI正在思考...') {
-                  assistantMessage.content = ''
                 }
                 if (data.citations) {
                   assistantMessage.citations = data.citations

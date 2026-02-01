@@ -45,6 +45,8 @@ type TokenStats struct {
 	TotalTokens  int `json:"total_tokens"`
 }
 
+type StreamEmitter func(event string, data map[string]string)
+
 // AssistantPipeline AI助手Pipeline（基于Eino Graph）
 type AssistantPipeline struct {
 	sessionRepo  repository.AssistantSessionRepository
@@ -120,7 +122,7 @@ func (p *AssistantPipeline) Execute(ctx context.Context, req *AssistantRequest) 
 
 // ExecuteStream 执行Assistant Pipeline（流式 + ReAct循环）
 // 注意：流式模式下，手动执行 ReAct 循环，最后一次 LLM 调用使用流式返回
-func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantRequest) (*schema.StreamReader[*schema.Message], *assistantState, error) {
+func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantRequest, emitter StreamEmitter) (*schema.StreamReader[*schema.Message], *assistantState, error) {
 	if req == nil {
 		return nil, nil, fmt.Errorf("request is nil")
 	}
@@ -141,9 +143,12 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 		return nil, nil, getError(err, st.Err)
 	}
 
-	// ReAct 循环：ChatModel ↔ Tools（非流式），直到没有 tool call
+	st.StreamEmitter = emitter
+
 	for {
-		// 调用 ChatModel（非流式，用于检查是否需要工具）
+		if st.StreamEmitter != nil {
+			st.StreamEmitter("thinking", map[string]string{"phase": "thinking"})
+		}
 		st, err = p.chatModelNode(ctx, st)
 		if err != nil || st.Err != nil {
 			return nil, nil, getError(err, st.Err)

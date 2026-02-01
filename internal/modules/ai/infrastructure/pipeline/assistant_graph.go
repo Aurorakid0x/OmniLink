@@ -38,10 +38,10 @@ type assistantState struct {
 	LLMMs         int64
 	Tools         []*schema.ToolInfo
 	Err           error
-	// ReAct 循环控制
-	IterationCount int             // 当前循环次数
-	MaxIterations  int             // 最大循环次数（默认10）
-	LastResponse   *schema.Message // 最后一次LLM响应
+	StreamEmitter StreamEmitter
+	IterationCount int                 // 当前循环次数
+	MaxIterations  int
+	LastResponse   *schema.Message
 }
 
 const defaultPersonaPrompt = "你是 OmniLink 的全局 AI 个人助手，回答必须基于用户权限内的聊天/联系人/群组信息。"
@@ -375,8 +375,12 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 
 		var toolResp string
 		var found bool
+		var runErr error
 
-		// 查找并执行工具
+		if st.StreamEmitter != nil {
+			st.StreamEmitter("tool_call", map[string]string{"tool_name": toolName})
+		}
+
 		for _, t := range p.tools {
 			info, _ := t.Info(ctx)
 			if info != nil && info.Name == toolName {
@@ -385,11 +389,13 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 				if invokable, ok := t.(tool.InvokableTool); ok {
 					res, err := invokable.InvokableRun(ctx, toolArgs)
 					if err != nil {
+						runErr = err
 						toolResp = fmt.Sprintf("Tool execution error: %v", err)
 					} else {
 						toolResp = res
 					}
 				} else {
+					runErr = fmt.Errorf("tool is not invokable")
 					toolResp = "Tool is not invokable"
 				}
 				break
@@ -397,7 +403,16 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 		}
 
 		if !found {
+			runErr = fmt.Errorf("tool not found")
 			toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
+		}
+
+		if st.StreamEmitter != nil {
+			status := "success"
+			if runErr != nil {
+				status = "error"
+			}
+			st.StreamEmitter("tool_result", map[string]string{"tool_name": toolName, "status": status})
 		}
 
 		// 获取tool call ID

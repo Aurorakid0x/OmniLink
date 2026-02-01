@@ -138,8 +138,16 @@ func (s *assistantServiceImpl) ChatStream(ctx context.Context, req request.Assis
 			AgentID:      strings.TrimSpace(req.AgentID),
 		}
 
-		// 执行流式Pipeline
-		streamReader, st, err := s.pipeline.ExecuteStream(ctx, pipeReq)
+		eventChan <- StreamEvent{Event: "thinking", Data: map[string]string{"phase": "understand"}}
+
+		emitter := func(event string, data map[string]string) {
+			if event == "" {
+				return
+			}
+			eventChan <- StreamEvent{Event: event, Data: data}
+		}
+
+		streamReader, st, err := s.pipeline.ExecuteStream(ctx, pipeReq, emitter)
 		if err != nil {
 			eventChan <- StreamEvent{Event: "error", Data: map[string]string{"error": err.Error()}}
 			return

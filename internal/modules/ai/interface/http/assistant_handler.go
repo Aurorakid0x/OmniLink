@@ -102,11 +102,16 @@ func (h *AssistantHandler) ChatStream(c *gin.Context) {
 			// 完成事件（包含完整信息）
 			c.SSEvent("done", event.Data)
 			c.Writer.Flush()
+		case "thinking", "tool_call", "tool_result":
+			c.SSEvent(event.Event, event.Data)
+			c.Writer.Flush()
 		case "error":
-			// 错误事件
 			c.SSEvent("error", event.Data)
 			c.Writer.Flush()
 			return
+		default:
+			c.SSEvent(event.Event, event.Data)
+			c.Writer.Flush()
 		}
 	}
 
