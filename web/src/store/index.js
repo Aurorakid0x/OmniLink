@@ -159,6 +159,16 @@ export default createStore({
             if (state.currentChatId !== peerId) {
                 const count = state.unreadMap[peerId] || 0
                 state.unreadMap[peerId] = count + 1
+
+                // 处理 @ 提醒
+                if (message.mentioned_user_ids && (message.mentioned_user_ids.includes(state.userInfo?.uuid) || message.mention_all)) {
+                    ElNotification({
+                        title: '有人@你',
+                        message: `${message.send_name} 在群里提到了你`,
+                        type: 'warning',
+                        duration: 5000
+                    })
+                }
             }
             
             // 更新会话列表最后一条消息

@@ -33,6 +33,7 @@ type realtimeServiceImpl struct {
 	contactRepo contactRepository.UserContactRepository
 	userRepo    userRepository.UserInfoRepository
 	groupRepo   contactRepository.GroupInfoRepository
+	mentionRepo chatRepository.MessageMentionRepository
 	aiIngest    aiIngest.AsyncIngestService
 }
 
@@ -42,6 +43,7 @@ func NewRealtimeService(
 	contactRepo contactRepository.UserContactRepository,
 	userRepo userRepository.UserInfoRepository,
 	groupRepo contactRepository.GroupInfoRepository,
+	mentionRepo chatRepository.MessageMentionRepository,
 	aiIngestSvc aiIngest.AsyncIngestService,
 ) RealtimeService {
 	return &realtimeServiceImpl{
@@ -50,6 +52,7 @@ func NewRealtimeService(
 		contactRepo: contactRepo,
 		userRepo:    userRepo,
 		groupRepo:   groupRepo,
+		mentionRepo: mentionRepo,
 		aiIngest:    aiIngestSvc,
 	}
 }
@@ -347,20 +350,57 @@ func (s *realtimeServiceImpl) SendGroupMessage(senderID string, req chatRequest.
 		}
 	}
 
+	// 7. 处理 @ 提及
+	var mentions []*chatEntity.MessageMention
+	if req.MentionAll {
+		mentions = append(mentions, &chatEntity.MessageMention{
+			MessageUuid:     msg.Uuid,
+			SessionId:       req.ReceiveId, // 使用群组ID作为上下文
+			MentionedUserId: "",            // 全体
+			MentionType:     1,             // 全体
+			CreatedAt:       now,
+		})
+	} else if len(req.MentionedUserIds) > 0 {
+		// 去重
+		seen := make(map[string]bool)
+		for _, uid := range req.MentionedUserIds {
+			if uid == "" || seen[uid] {
+				continue
+			}
+			seen[uid] = true
+			mentions = append(mentions, &chatEntity.MessageMention{
+				MessageUuid:     msg.Uuid,
+				SessionId:       req.ReceiveId,
+				MentionedUserId: uid,
+				MentionType:     0, // 指定用户
+				CreatedAt:       now,
+			})
+		}
+	}
+
+	if len(mentions) > 0 {
+		if err := s.mentionRepo.CreateBatch(mentions); err != nil {
+			zlog.Error("create message mentions failed: " + err.Error())
+			// 提及失败不影响消息发送，仅记录日志
+		}
+	}
+
 	item := &chatRespond.MessageItem{
-		Uuid:       msg.Uuid,
-		SessionId:  "",
-		SendId:     msg.SendId,
-		SendName:   msg.SendName,
-		SendAvatar: msg.SendAvatar,
-		ReceiveId:  msg.ReceiveId,
-		Type:       msg.Type,
-		Content:    msg.Content,
-		Url:        msg.Url,
-		FileType:   msg.FileType,
-		FileName:   msg.FileName,
-		FileSize:   msg.FileSize,
-		CreatedAt:  msg.CreatedAt.Format(time.RFC3339),
+		Uuid:             msg.Uuid,
+		SessionId:        "",
+		SendId:           msg.SendId,
+		SendName:         msg.SendName,
+		SendAvatar:       msg.SendAvatar,
+		ReceiveId:        msg.ReceiveId,
+		Type:             msg.Type,
+		Content:          msg.Content,
+		Url:              msg.Url,
+		FileType:         msg.FileType,
+		FileName:         msg.FileName,
+		FileSize:         msg.FileSize,
+		CreatedAt:        msg.CreatedAt.Format(time.RFC3339),
+		MentionedUserIds: req.MentionedUserIds,
+		MentionAll:       req.MentionAll,
 	}
 
 	return memberIDs, item, nil

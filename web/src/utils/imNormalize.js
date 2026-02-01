@@ -62,6 +62,8 @@ export const normalizeIncomingMessage = (raw, currentUserId) => {
     send_avatar: raw.send_avatar || raw.sendAvatar || '',
     send_name: raw.send_name || raw.sendName || '',
     created_at: raw.created_at || raw.createdAt || new Date().toISOString(),
+    mentioned_user_ids: raw.mentioned_user_ids || raw.mentionedUserIds || [],
+    mention_all: raw.mention_all || raw.mentionAll || false,
     // Calculated field
     peer_id: peerId
   };

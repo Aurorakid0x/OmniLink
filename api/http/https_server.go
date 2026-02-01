@@ -64,6 +64,7 @@ func init() {
 	uow := contactPersistence.NewContactUnitOfWork(initial.GormDB)
 	sessionRepo := chatPersistence.NewSessionRepository(initial.GormDB)
 	messageRepo := chatPersistence.NewMessageRepository(initial.GormDB)
+	mentionRepo := chatPersistence.NewMessageMentionRepository(initial.GormDB)
 	conf := config.GetConfig()
 	var aiAdminH *aiHTTP.AdminHandler
 	var aiQueryH *aiHTTP.QueryHandler
@@ -188,8 +189,8 @@ func init() {
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow, aiAsyncIngest)
 	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow, aiAsyncIngest)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
-	messageSvc := chatService.NewMessageService(messageRepo, contactRepo)
-	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, aiAsyncIngest)
+	messageSvc := chatService.NewMessageService(messageRepo, contactRepo, mentionRepo)
+	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, mentionRepo, aiAsyncIngest)
 
 	// MCP Initialization
 	if conf.MCPConfig.Enabled {

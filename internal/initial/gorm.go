@@ -53,6 +53,7 @@ func init() {
 		&contactEntity.GroupInfo{},
 		&chatEntity.Session{},
 		&chatEntity.Message{},
+		&chatEntity.MessageMention{},
 
 		&aiRag.AIKnowledgeBase{},
 		&aiRag.AIKnowledgeSource{},

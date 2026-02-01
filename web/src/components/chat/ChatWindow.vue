@@ -22,8 +22,7 @@
                 <div class="msg-sender" v-if="isGroup && !isMine(msg)">{{ getSenderName(msg) }}</div>
                 
                 <!-- Text Message -->
-                <div class="msg-bubble" v-if="msg.type === 0 || msg.type === undefined">
-                    {{ msg.content }}
+                <div class="msg-bubble" v-if="msg.type === 0 || msg.type === undefined" v-html="formatMessageContent(msg)">
                 </div>
                 
                 <!-- Image Message -->
@@ -60,6 +59,25 @@
 
     <!-- Input Area -->
     <div class="input-area" v-if="sessionAllowed">
+      <!-- Mention List Popup -->
+      <div class="mention-list custom-scrollbar" v-if="showMentionList" v-click-outside="closeMentionList">
+          <div class="mention-item" @click="selectMention({ user_id: 'all', nickname: '所有人' })" v-if="isAdminOrOwner">
+              <el-avatar :size="24" class="mention-avatar">All</el-avatar>
+              <span class="mention-name">所有人</span>
+          </div>
+          <div 
+              v-for="member in filteredMembers" 
+              :key="member.user_id"
+              class="mention-item"
+              @click="selectMention(member)"
+          >
+              <el-avatar :size="24" :src="normalizeUrl(member.avatar)" class="mention-avatar">
+                  {{ (member.nickname || member.username || '?')[0] }}
+              </el-avatar>
+              <span class="mention-name">{{ member.nickname || member.username }}</span>
+          </div>
+      </div>
+
       <div class="toolbar">
         <el-upload
             class="upload-demo"
@@ -81,6 +99,7 @@
         resize="none"
         placeholder="输入消息..."
         @keydown.enter.prevent="handleSend"
+        @input="handleInput"
       />
       
       <div class="send-actions">
@@ -101,8 +120,8 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useStore } from 'vuex'
 import { More, Document, Download, Folder, Picture } from '@element-plus/icons-vue'
-import { normalizeUrl, uploadFile, getGroupInfo, checkOpenSessionAllowed } from '../../api/im'
-import { ElMessage } from 'element-plus'
+import { normalizeUrl, uploadFile, getGroupInfo, checkOpenSessionAllowed, getGroupMemberList } from '../../api/im'
+import { ElMessage, ClickOutside } from 'element-plus'
 
 const props = defineProps({
   session: Object,
@@ -110,6 +129,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['send-message', 'toggle-right-sidebar', 'load-more'])
+
+const vClickOutside = ClickOutside
 
 const store = useStore()
 const inputText = ref('')
@@ -261,6 +282,20 @@ const getSenderName = (msg) => {
     return msg.send_name || '未知'
 }
 
+const formatMessageContent = (msg) => {
+    let text = msg.content || ''
+    // Basic HTML escape
+    text = text.replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+        
+    // Highlight @...
+    // Note: This matches @... until space. 
+    return text.replace(/(@[\u4e00-\u9fa5\w\-_]+)/g, '<span style="color: #409EFF; font-weight: bold;">$1</span>')
+}
+
 const isImage = (typeOrUrl) => {
     if (!typeOrUrl) return false
     const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp']
@@ -330,13 +365,107 @@ watch(() => props.session, () => {
     scrollToBottom()
 })
 
+const showMentionList = ref(false)
+const groupMembers = ref([])
+const mentionQuery = ref('')
+const selectedMentions = ref([])
+
+const isAdminOrOwner = computed(() => true) // 暂简化
+
+const filteredMembers = computed(() => {
+    let list = groupMembers.value
+    if (mentionQuery.value) {
+        const q = mentionQuery.value.toLowerCase()
+        list = list.filter(m => {
+            const name = m.nickname || m.username || ''
+            return name.toLowerCase().includes(q)
+        })
+    }
+    return list
+})
+
+const loadGroupMembers = async () => {
+    if (!groupId.value) return
+    if (groupMembers.value.length > 0) return 
+    try {
+        const res = await getGroupMemberList({ group_id: groupId.value })
+        if (res.data.code === 200) {
+            groupMembers.value = res.data.data || []
+        }
+    } catch(e) {
+        console.error(e)
+    }
+}
+
+const handleInput = (val) => {
+    if (!isGroup.value) return
+    const lastChar = val.slice(-1)
+    if (lastChar === '@') {
+        showMentionList.value = true
+        mentionQuery.value = ''
+        loadGroupMembers()
+    } else if (showMentionList.value) {
+        const lastAt = val.lastIndexOf('@')
+        if (lastAt === -1) {
+            showMentionList.value = false
+            return
+        }
+        const query = val.slice(lastAt + 1)
+        if (query.includes(' ') || query.includes('\n')) {
+             showMentionList.value = false
+        } else {
+            mentionQuery.value = query
+        }
+    }
+}
+
+const selectMention = (member) => {
+    const text = inputText.value
+    const lastAt = text.lastIndexOf('@')
+    if (lastAt !== -1) {
+        const prefix = text.slice(0, lastAt)
+        const name = member.nickname || member.username || '所有人'
+        inputText.value = prefix + '@' + name + ' '
+        
+        if (member.user_id === 'all') {
+            selectedMentions.value.push({ id: 'all', name: '所有人' })
+        } else {
+            selectedMentions.value.push({ id: member.user_id, name: name })
+        }
+    }
+    showMentionList.value = false
+}
+
+const closeMentionList = () => {
+    showMentionList.value = false
+}
+
 const handleSend = () => {
     if (!inputText.value.trim()) return
+    
+    const text = inputText.value
+    const finalMentionIds = []
+    let mentionAll = false
+    
+    selectedMentions.value.forEach(m => {
+        if (text.includes('@' + m.name)) {
+            if (m.id === 'all') {
+                mentionAll = true
+            } else {
+                finalMentionIds.push(m.id)
+            }
+        }
+    })
+
     emit('send-message', {
         type: 0,
-        content: inputText.value
+        content: inputText.value,
+        mentioned_user_ids: finalMentionIds,
+        mention_all: mentionAll
     })
     inputText.value = ''
+    selectedMentions.value = []
+    showMentionList.value = false
 }
 
 const handleUpload = async (options) => {
@@ -561,5 +690,43 @@ const triggerImageUpload = () => {
 .block-msg {
     color: #909399;
     font-size: 14px;
+}
+
+.mention-list {
+    position: absolute;
+    bottom: 160px;
+    left: 20px;
+    width: 200px;
+    max-height: 200px;
+    background: white;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1);
+    z-index: 1000;
+    overflow-y: auto;
+}
+
+.mention-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    gap: 8px;
+}
+
+.mention-item:hover {
+    background-color: #f5f7fa;
+}
+
+.mention-avatar {
+    flex-shrink: 0;
+}
+
+.mention-name {
+    font-size: 13px;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>

@@ -10,4 +10,7 @@ type SendMessageRequest struct {
 	FileType string `json:"file_type"`
 	FileName string `json:"file_name"`
 	FileSize string `json:"file_size"`
+
+	MentionedUserIds []string `json:"mentioned_user_ids"` // 被提及的用户ID列表
+	MentionAll       bool     `json:"mention_all"`        // 是否提及所有人
 }

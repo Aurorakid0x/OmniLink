@@ -21,12 +21,14 @@ type MessageService interface {
 type messageServiceImpl struct {
 	messageRepo chatRepository.MessageRepository
 	contactRepo contactRepository.UserContactRepository
+	mentionRepo chatRepository.MessageMentionRepository
 }
 
-func NewMessageService(messageRepo chatRepository.MessageRepository, contactRepo contactRepository.UserContactRepository) MessageService {
+func NewMessageService(messageRepo chatRepository.MessageRepository, contactRepo contactRepository.UserContactRepository, mentionRepo chatRepository.MessageMentionRepository) MessageService {
 	return &messageServiceImpl{
 		messageRepo: messageRepo,
 		contactRepo: contactRepo,
+		mentionRepo: mentionRepo,
 	}
 }
 
@@ -133,23 +135,45 @@ func (s *messageServiceImpl) GetGroupMessageList(req chatRequest.GetGroupMessage
 		return nil, xerr.ErrServerError
 	}
 
+	// 获取 Mentions
+	var msgUUIDs []string
+	for _, m := range msgs {
+		msgUUIDs = append(msgUUIDs, m.Uuid)
+	}
+	mentionsMap, _ := s.mentionRepo.GetMentionsByMessageUUIDs(msgUUIDs)
+
 	out := make([]chatRespond.MessageItem, 0, len(msgs))
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
+
+		var mentionedUserIds []string
+		var mentionAll bool
+		if mentions, ok := mentionsMap[m.Uuid]; ok {
+			for _, mention := range mentions {
+				if mention.MentionType == 1 {
+					mentionAll = true
+				} else {
+					mentionedUserIds = append(mentionedUserIds, mention.MentionedUserId)
+				}
+			}
+		}
+
 		out = append(out, chatRespond.MessageItem{
-			Uuid:       m.Uuid,
-			SessionId:  m.SessionId,
-			SendId:     m.SendId,
-			SendName:   m.SendName,
-			SendAvatar: m.SendAvatar,
-			ReceiveId:  m.ReceiveId,
-			Type:       m.Type,
-			Content:    m.Content,
-			Url:        m.Url,
-			FileType:   m.FileType,
-			FileName:   m.FileName,
-			FileSize:   m.FileSize,
-			CreatedAt:  m.CreatedAt.Format(time.RFC3339),
+			Uuid:             m.Uuid,
+			SessionId:        m.SessionId,
+			SendId:           m.SendId,
+			SendName:         m.SendName,
+			SendAvatar:       m.SendAvatar,
+			ReceiveId:        m.ReceiveId,
+			Type:             m.Type,
+			Content:          m.Content,
+			Url:              m.Url,
+			FileType:         m.FileType,
+			FileName:         m.FileName,
+			FileSize:         m.FileSize,
+			CreatedAt:        m.CreatedAt.Format(time.RFC3339),
+			MentionedUserIds: mentionedUserIds,
+			MentionAll:       mentionAll,
 		})
 	}
 	return out, nil

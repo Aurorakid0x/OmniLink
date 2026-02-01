@@ -14,4 +14,7 @@ type MessageItem struct {
 	FileName   string `json:"file_name,omitempty"`
 	FileSize   string `json:"file_size,omitempty"`
 	CreatedAt  string `json:"created_at"`
+
+	MentionedUserIds []string `json:"mentioned_user_ids,omitempty"` // 被提及的用户ID列表
+	MentionAll       bool     `json:"mention_all,omitempty"`        // 是否提及所有人
 }
