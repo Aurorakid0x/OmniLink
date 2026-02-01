@@ -1,6 +1,9 @@
 package persistence
 
 import (
+	"context"
+	"time"
+
 	chatEntity "OmniLink/internal/modules/chat/domain/entity"
 	chatRepository "OmniLink/internal/modules/chat/domain/repository"
 
@@ -61,4 +64,25 @@ func (r *messageRepositoryImpl) ListGroupMessages(groupID string, page int, page
 
 func (r *messageRepositoryImpl) Create(message *chatEntity.Message) error {
 	return r.db.Create(message).Error
+}
+
+func (r *messageRepositoryImpl) GetMessagesForUserAfter(ctx context.Context, userID string, groupIDs []string, since time.Time, limit int) ([]chatEntity.Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var msgs []chatEntity.Message
+	query := r.db.WithContext(ctx).Where("created_at > ?", since)
+
+	if len(groupIDs) > 0 {
+		query = query.Where("receive_id = ? OR receive_id IN ?", userID, groupIDs)
+	} else {
+		query = query.Where("receive_id = ?", userID)
+	}
+
+	err := query.Order("created_at ASC").Limit(limit).Find(&msgs).Error
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
 }
