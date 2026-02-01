@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -73,9 +74,26 @@ func (h *WsHandler) Connect(c *gin.Context) {
 
 	client := ws.NewClient(clientID, conn)
 	h.hub.Register(client)
-	defer h.hub.Unregister(client)
+	// 上线：更新 LastOnlineAt
+	go func() {
+		if err := h.userRepo.UpdateLastOnlineAt(c.Request.Context(), clientID, time.Now()); err != nil {
+			zlog.Error("Failed to update last online time: " + err.Error())
+		}
+	}()
+
+	defer func() {
+		h.hub.Unregister(client)
+		// 离线：更新 LastOfflineAt
+		go func() {
+			// 这里不能用 c.Request.Context() 因为请求可能已经结束，用 Background
+			if err := h.userRepo.UpdateLastOfflineAt(context.Background(), clientID, time.Now()); err != nil {
+				zlog.Error("Failed to update last offline time: " + err.Error())
+			}
+		}()
+	}()
 
 	conn.SetReadLimit(1 << 20)
+
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))

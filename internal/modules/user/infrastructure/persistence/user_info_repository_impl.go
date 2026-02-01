@@ -1,6 +1,9 @@
 package persistence
 
 import (
+	"context"
+	"time"
+
 	contact "OmniLink/internal/modules/contact/domain/entity"
 	"OmniLink/internal/modules/user/domain/entity"
 	"OmniLink/internal/modules/user/domain/repository"
@@ -42,6 +45,20 @@ func (r *userInfoRepositoryImpl) GetUserInfoByUsername(username string) (*entity
 		return nil, err
 	}
 	return &user, nil
+}
+
+// UpdateLastOnlineAt 更新用户上线时间
+func (r *userInfoRepositoryImpl) UpdateLastOnlineAt(ctx context.Context, uuid string, t time.Time) error {
+	return r.db.WithContext(ctx).Model(&entity.UserInfo{}).
+		Where("uuid = ?", uuid).
+		Update("last_online_at", t).Error
+}
+
+// UpdateLastOfflineAt 更新用户离线时间
+func (r *userInfoRepositoryImpl) UpdateLastOfflineAt(ctx context.Context, uuid string, t time.Time) error {
+	return r.db.WithContext(ctx).Model(&entity.UserInfo{}).
+		Where("uuid = ?", uuid).
+		Update("last_offline_at", t).Error
 }
 
 func (r *userInfoRepositoryImpl) GetUserInfoByUUIDWithoutPassword(uuid string) (*entity.UserInfo, error) {

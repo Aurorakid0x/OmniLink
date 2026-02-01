@@ -1,6 +1,9 @@
 package repository
 
 import (
+	"context"
+	"time"
+
 	contact "OmniLink/internal/modules/contact/domain/entity"
 	"OmniLink/internal/modules/user/domain/entity"
 )
@@ -18,4 +21,9 @@ type UserInfoRepository interface {
 	SearchUsersByNickname(keyword string, limit int) ([]entity.UserBrief, error)
 	// FindUserByExactNickname 根据精确昵称查找用户（支持用户名降级）
 	FindUserByExactNickname(nickname string) (*entity.UserBrief, error)
+
+	// UpdateLastOnlineAt 更新用户上线时间
+	UpdateLastOnlineAt(ctx context.Context, uuid string, t time.Time) error
+	// UpdateLastOfflineAt 更新用户离线时间
+	UpdateLastOfflineAt(ctx context.Context, uuid string, t time.Time) error
 }
