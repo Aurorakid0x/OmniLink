@@ -1,10 +1,11 @@
 package persistence
 
 import (
-	"OmniLink/internal/modules/ai/domain/job"
-	"OmniLink/internal/modules/ai/domain/repository"
 	"context"
 	"time"
+
+	"OmniLink/internal/modules/ai/domain/job"
+	"OmniLink/internal/modules/ai/domain/repository"
 
 	"gorm.io/gorm"
 )
@@ -46,6 +47,19 @@ func (r *aiJobRepoImpl) GetDefsByEventAndUser(ctx context.Context, eventKey stri
 	return defs, err
 }
 
+func (r *aiJobRepoImpl) DeactivateDef(ctx context.Context, defID int64, userID string) error {
+	if defID <= 0 || userID == "" {
+		return nil
+	}
+	// 软删除规则：保留历史实例记录
+	return r.db.WithContext(ctx).Model(&job.AIJobDef{}).
+		Where("id = ? AND tenant_user_id = ?", defID, userID).
+		Updates(map[string]interface{}{
+			"is_active":  false,
+			"updated_at": time.Now(),
+		}).Error
+}
+
 func (r *aiJobRepoImpl) CreateInst(ctx context.Context, inst *job.AIJobInst) error {
 	return r.db.WithContext(ctx).Create(inst).Error
 }
@@ -81,4 +95,18 @@ func (r *aiJobRepoImpl) IncrInstRetry(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Model(&job.AIJobInst{}).
 		Where("id = ?", id).
 		UpdateColumn("retry_count", gorm.Expr("retry_count + ?", 1)).Error
+}
+
+func (r *aiJobRepoImpl) UpdateInstForRetry(ctx context.Context, id int64, nextTriggerAt time.Time, result string) error {
+	if id <= 0 {
+		return nil
+	}
+	// 延后执行时间，避免失败任务频繁重试
+	return r.db.WithContext(ctx).Model(&job.AIJobInst{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":         job.JobStatusPending,
+			"trigger_at":     nextTriggerAt,
+			"result_summary": result,
+		}).Error
 }

@@ -20,6 +20,7 @@ type AIJobService interface {
 	CreateOneTimeJob(ctx context.Context, userID string, agentID string, prompt string, triggerAt time.Time) error
 	CreateCronJob(ctx context.Context, userID string, agentID string, prompt string, cronExpr string) error
 	CreateEventJob(ctx context.Context, userID string, agentID string, prompt string, eventKey string) error
+	DeactivateJobDef(ctx context.Context, userID string, defID int64) error
 }
 
 type aiJobServiceImpl struct {
@@ -120,6 +121,14 @@ func (s *aiJobServiceImpl) CreateEventJob(ctx context.Context, userID string, ag
 		UpdatedAt:    time.Now(),
 	}
 	return s.jobRepo.CreateDef(ctx, def)
+}
+
+func (s *aiJobServiceImpl) DeactivateJobDef(ctx context.Context, userID string, defID int64) error {
+	if userID == "" || defID <= 0 {
+		return nil
+	}
+	// 仅停用规则，不删除历史实例
+	return s.jobRepo.DeactivateDef(ctx, defID, userID)
 }
 
 func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobInst) error {

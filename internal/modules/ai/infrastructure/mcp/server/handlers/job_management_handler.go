@@ -11,6 +11,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/robfig/cron/v3"
 )
 
 type JobManagementHandler struct {
@@ -30,10 +31,11 @@ func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("manage_ai_job",
 		mcp.WithDescription("创建或管理 AI 自动化任务。支持定时(cron)、一次性(once)、事件驱动(event)三种模式。"),
 		mcp.WithString("action", mcp.Required(), mcp.Description("操作类型: create | delete")),
-		mcp.WithString("trigger_type", mcp.Required(), mcp.Description("触发类型: once | cron | event")),
-		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传表达式(0 8 * * *), event传事件key(user_login)")),
+		mcp.WithString("trigger_type", mcp.Description("触发类型: once | cron | event")),
+		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传5段表达式(0 8 * * *), event传事件key(user_login)")),
 		mcp.WithString("prompt", mcp.Description("任务执行时发送给Agent的指令Prompt")),
 		mcp.WithString("agent_id", mcp.Description("执行任务的AgentID (可选，默认使用当前Agent)")),
+		mcp.WithNumber("job_def_id", mcp.Description("删除任务时传入的任务定义ID")),
 	), h.handleManageJob)
 
 	// 2. Tool: list_my_agents (辅助工具，查询用户有哪些Agent)
@@ -57,6 +59,12 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 	triggerValue, _ := args["trigger_value"].(string)
 	prompt, _ := args["prompt"].(string)
 	targetAgentID, _ := args["agent_id"].(string)
+	var defID int64
+	if rawID, ok := args["job_def_id"]; ok {
+		if v, ok := rawID.(float64); ok {
+			defID = int64(v)
+		}
+	}
 
 	// 需要 Pipeline 注入 UserID 和 AgentID
 	var userID, currentAgentID string
@@ -83,6 +91,20 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 		if prompt == "" {
 			return mcp.NewToolResultError("prompt is required for creation"), nil
 		}
+		if triggerType == "" {
+			return mcp.NewToolResultError("trigger_type is required for creation"), nil
+		}
+		if targetAgentID == "" {
+			return mcp.NewToolResultError("agent_id is required"), nil
+		}
+		// 校验 agent 归属，防止越权调用
+		ag, err := h.agentRepo.GetAgentByID(ctx, targetAgentID, userID)
+		if err != nil {
+			return mcp.NewToolResultError("agent lookup failed: " + err.Error()), nil
+		}
+		if ag == nil {
+			return mcp.NewToolResultError("agent_id not found or unauthorized"), nil
+		}
 
 		switch triggerType {
 		case "once":
@@ -100,9 +122,9 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 			return mcp.NewToolResultText(fmt.Sprintf("Created One-time Job at %s", t.Format(time.RFC3339))), nil
 
 		case "cron":
-			// 简单的 Cron 校验
-			if len(triggerValue) < 5 {
-				return mcp.NewToolResultError("invalid cron expression"), nil
+			// 使用标准5段cron表达式校验
+			if _, err := cron.ParseStandard(triggerValue); err != nil {
+				return mcp.NewToolResultError("invalid cron expression (5 fields required)"), nil
 			}
 			if err := h.jobSvc.CreateCronJob(ctx, userID, targetAgentID, prompt, triggerValue); err != nil {
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
@@ -121,6 +143,17 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 		default:
 			return mcp.NewToolResultError("unknown trigger_type"), nil
 		}
+	}
+
+	if action == "delete" {
+		if defID <= 0 {
+			return mcp.NewToolResultError("job_def_id is required for delete"), nil
+		}
+		// 软删除任务定义：保留历史实例
+		if err := h.jobSvc.DeactivateJobDef(ctx, userID, defID); err != nil {
+			return mcp.NewToolResultError("failed: " + err.Error()), nil
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("Deactivated Job Def: %d", defID)), nil
 	}
 
 	return mcp.NewToolResultError("unknown action"), nil

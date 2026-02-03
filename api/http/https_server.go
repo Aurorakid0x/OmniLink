@@ -20,6 +20,7 @@ import (
 	aiTransform "OmniLink/internal/modules/ai/infrastructure/transform"
 	aiVectordb "OmniLink/internal/modules/ai/infrastructure/vectordb"
 	aiHTTP "OmniLink/internal/modules/ai/interface/http"
+	aiScheduler "OmniLink/internal/modules/ai/interface/scheduler"
 
 	// MCP Imports
 	einoMCP "github.com/cloudwego/eino-ext/components/tool/mcp"
@@ -75,6 +76,7 @@ func init() {
 	var userLifecycleSvc aiService.UserLifecycleService // 用户生命周期服务（用于新用户AI助手初始化）
 	var aiJobSvc aiService.AIJobService
 	var aiAgentRepo aiRepository.AgentRepository
+	var aiJobRepo aiRepository.AIJobRepository
 	if initial.MilvusClient != nil {
 		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
@@ -165,7 +167,7 @@ func init() {
 							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 							aiAgentRepo = agentRepo
-							aiJobRepo := aiPersistence.NewAIJobRepository(initial.GormDB)
+							aiJobRepo = aiPersistence.NewAIJobRepository(initial.GormDB)
 							aiJobSvc = aiService.NewAIJobService(aiJobRepo, assistantSvc)
 						}
 					}
@@ -264,6 +266,11 @@ func init() {
 		}
 
 		zlog.Info("MCP initialization completed")
+	}
+	if aiJobSvc != nil && aiJobRepo != nil {
+		// 启动任务调度器：负责Cron规则加载与实例执行
+		schedulerMgr := aiScheduler.NewSchedulerManager(aiJobRepo, aiJobSvc)
+		schedulerMgr.Start()
 	}
 
 	userH := userHandler.NewUserInfoHandler(userSvc)
