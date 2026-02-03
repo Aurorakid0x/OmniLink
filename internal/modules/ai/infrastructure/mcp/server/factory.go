@@ -1,13 +1,16 @@
 package server
 
 import (
-	"github.com/mark3labs/mcp-go/server"
-
+	aiService "OmniLink/internal/modules/ai/application/service"
+	aiRepository "OmniLink/internal/modules/ai/domain/repository"
 	mcpHandlers "OmniLink/internal/modules/ai/infrastructure/mcp/server/handlers"
 	chatService "OmniLink/internal/modules/chat/application/service"
 	contactService "OmniLink/internal/modules/contact/application/service"
 	contactRepository "OmniLink/internal/modules/contact/domain/repository"
 	userRepository "OmniLink/internal/modules/user/domain/repository"
+	"OmniLink/pkg/ws"
+
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // BuiltinServerConfig 内置服务器配置
@@ -28,6 +31,9 @@ type BuiltinServerDependencies struct {
 	SessionSvc chatService.SessionService
 	UserRepo   userRepository.UserInfoRepository
 	GroupRepo  contactRepository.GroupInfoRepository
+	JobSvc     aiService.AIJobService
+	AgentRepo  aiRepository.AgentRepository
+	WsHub      *ws.Hub
 }
 
 // NewBuiltinMCPServer 创建并配置内置 MCP Server
@@ -51,6 +57,16 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 	if conf.EnableContactTools && deps.ContactSvc != nil && deps.GroupSvc != nil {
 		actionHandler := mcpHandlers.NewContactActionToolHandler(deps.ContactSvc, deps.GroupSvc)
 		actionHandler.RegisterTools(s)
+	}
+
+	if deps.JobSvc != nil && deps.AgentRepo != nil {
+		jobHandler := mcpHandlers.NewJobManagementHandler(deps.JobSvc, deps.AgentRepo)
+		jobHandler.RegisterTools(s)
+	}
+
+	if deps.WsHub != nil {
+		notificationHandler := mcpHandlers.NewNotificationToolHandler(deps.WsHub)
+		notificationHandler.RegisterTools(s)
 	}
 
 	return s

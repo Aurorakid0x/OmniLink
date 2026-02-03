@@ -45,6 +45,9 @@ type AssistantService interface {
 
 	// ListSessionsWithFilter 获取会话列表（支持类型过滤）
 	ListSessionsWithFilter(ctx context.Context, tenantUserID string, sessionType string, limit, offset int) (*respond.AssistantSessionListRespond, error)
+
+	// ChatInternal 内部调用接口，不依赖 HTTP，不做 Token 校验
+	ChatInternal(ctx context.Context, req request.AssistantChatRequest, tenantUserID string) (*respond.AssistantChatRespond, error)
 }
 
 // StreamEvent SSE流式事件
@@ -598,5 +601,35 @@ func (s *assistantServiceImpl) ListSessionsWithFilter(ctx context.Context, tenan
 	return &respond.AssistantSessionListRespond{
 		Sessions: items,
 		Total:    len(items),
+	}, nil
+}
+
+func (s *assistantServiceImpl) ChatInternal(ctx context.Context, req request.AssistantChatRequest, tenantUserID string) (*respond.AssistantChatRespond, error) {
+	tenantUserID = strings.TrimSpace(tenantUserID)
+	if tenantUserID == "" {
+		return nil, fmt.Errorf("tenant_user_id is required")
+	}
+	if strings.TrimSpace(req.Question) == "" {
+		return nil, fmt.Errorf("question is required")
+	}
+	pipeReq := &pipeline.AssistantRequest{
+		SessionID:    strings.TrimSpace(req.SessionID),
+		TenantUserID: tenantUserID,
+		Question:     strings.TrimSpace(req.Question),
+		AgentID:      strings.TrimSpace(req.AgentID),
+	}
+	result, err := s.pipeline.Execute(ctx, pipeReq)
+	if err != nil {
+		return nil, err
+	}
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return &respond.AssistantChatRespond{
+		SessionID: result.SessionID,
+		Answer:    result.Answer,
+		Citations: result.Citations,
+		QueryID:   result.QueryID,
+		Timing:    result.Timing,
 	}, nil
 }

@@ -8,6 +8,7 @@ import (
 	"OmniLink/internal/initial"
 	jwtMiddleware "OmniLink/internal/middleware/jwt"
 	aiService "OmniLink/internal/modules/ai/application/service"
+	aiRepository "OmniLink/internal/modules/ai/domain/repository"
 	aiChunking "OmniLink/internal/modules/ai/infrastructure/chunking"
 	aiEmbedding "OmniLink/internal/modules/ai/infrastructure/embedding"
 	aiLLM "OmniLink/internal/modules/ai/infrastructure/llm"
@@ -72,6 +73,8 @@ func init() {
 	var assistantPipeline *aiPipeline.AssistantPipeline
 	var aiAsyncIngest aiService.AsyncIngestService
 	var userLifecycleSvc aiService.UserLifecycleService // 用户生命周期服务（用于新用户AI助手初始化）
+	var aiJobSvc aiService.AIJobService
+	var aiAgentRepo aiRepository.AgentRepository
 	if initial.MilvusClient != nil {
 		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
@@ -161,6 +164,9 @@ func init() {
 						} else {
 							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
+							aiAgentRepo = agentRepo
+							aiJobRepo := aiPersistence.NewAIJobRepository(initial.GormDB)
+							aiJobSvc = aiService.NewAIJobService(aiJobRepo, assistantSvc)
 						}
 					}
 				}
@@ -217,6 +223,9 @@ func init() {
 					SessionSvc: sessionSvc,
 					UserRepo:   userRepo,
 					GroupRepo:  groupRepo,
+					JobSvc:     aiJobSvc,
+					AgentRepo:  aiAgentRepo,
+					WsHub:      wsHub,
 				},
 			)
 

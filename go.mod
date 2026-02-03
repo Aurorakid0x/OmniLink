@@ -19,6 +19,7 @@ require (
 	github.com/milvus-io/milvus-sdk-go/v2 v2.4.2
 	github.com/milvus-io/milvus/client/v2 v2.6.1
 	github.com/natefinch/lumberjack v2.0.0+incompatible
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/unrolled/secure v1.17.0
 	go.uber.org/zap v1.27.1
 	gorm.io/driver/mysql v1.6.0
