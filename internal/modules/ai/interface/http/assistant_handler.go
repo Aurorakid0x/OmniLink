@@ -118,6 +118,25 @@ func (h *AssistantHandler) ChatStream(c *gin.Context) {
 	zlog.Info("assistant chat stream completed", zap.String("uuid", uuid))
 }
 
+func (h *AssistantHandler) SmartCommand(c *gin.Context) {
+	var req aiRequest.SmartCommandRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error("assistant smart command bind error", zap.Error(err))
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+	uuid := strings.TrimSpace(c.GetString("uuid"))
+	if uuid == "" {
+		back.Error(c, xerr.Unauthorized, "未登录")
+		return
+	}
+	data, err := h.svc.SmartCommand(c.Request.Context(), req, uuid)
+	if err != nil {
+		zlog.Error("assistant smart command failed", zap.Error(err), zap.String("uuid", uuid))
+	}
+	back.Result(c, data, err)
+}
+
 // ListSessions 获取AI助手会话列表（支持类型过滤）
 //
 // 路由: GET /ai/assistant/sessions

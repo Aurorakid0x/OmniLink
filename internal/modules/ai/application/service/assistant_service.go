@@ -48,6 +48,8 @@ type AssistantService interface {
 
 	// ChatInternal 内部调用接口，不依赖 HTTP，不做 Token 校验
 	ChatInternal(ctx context.Context, req request.AssistantChatRequest, tenantUserID string) (*respond.AssistantChatRespond, error)
+
+	SmartCommand(ctx context.Context, req request.SmartCommandRequest, tenantUserID string) (*respond.SmartCommandRespond, error)
 }
 
 // StreamEvent SSE流式事件
@@ -57,11 +59,12 @@ type StreamEvent struct {
 }
 
 type assistantServiceImpl struct {
-	sessionRepo repository.AssistantSessionRepository
-	messageRepo repository.AssistantMessageRepository
-	agentRepo   repository.AgentRepository
-	ragRepo     repository.RAGRepository
-	pipeline    *pipeline.AssistantPipeline
+	sessionRepo      repository.AssistantSessionRepository
+	messageRepo      repository.AssistantMessageRepository
+	agentRepo        repository.AgentRepository
+	ragRepo          repository.RAGRepository
+	pipeline         *pipeline.AssistantPipeline
+	smartCommandPipe *pipeline.SmartCommandPipeline
 }
 
 // NewAssistantService 创建AssistantService
@@ -71,13 +74,15 @@ func NewAssistantService(
 	agentRepo repository.AgentRepository,
 	ragRepo repository.RAGRepository,
 	pipe *pipeline.AssistantPipeline,
+	smartCommandPipe *pipeline.SmartCommandPipeline,
 ) AssistantService {
 	return &assistantServiceImpl{
-		sessionRepo: sessionRepo,
-		messageRepo: messageRepo,
-		agentRepo:   agentRepo,
-		ragRepo:     ragRepo,
-		pipeline:    pipe,
+		sessionRepo:      sessionRepo,
+		messageRepo:      messageRepo,
+		agentRepo:        agentRepo,
+		ragRepo:          ragRepo,
+		pipeline:         pipe,
+		smartCommandPipe: smartCommandPipe,
 	}
 }
 
@@ -631,5 +636,67 @@ func (s *assistantServiceImpl) ChatInternal(ctx context.Context, req request.Ass
 		Citations: result.Citations,
 		QueryID:   result.QueryID,
 		Timing:    result.Timing,
+	}, nil
+}
+
+func (s *assistantServiceImpl) SmartCommand(ctx context.Context, req request.SmartCommandRequest, tenantUserID string) (*respond.SmartCommandRespond, error) {
+	tenantUserID = strings.TrimSpace(tenantUserID)
+	if tenantUserID == "" {
+		return nil, fmt.Errorf("tenant_user_id is required")
+	}
+	command := strings.TrimSpace(req.Command)
+	if command == "" {
+		return nil, fmt.Errorf("command is required")
+	}
+	if s.smartCommandPipe == nil {
+		return nil, fmt.Errorf("smart command pipeline is nil")
+	}
+
+	agentID := strings.TrimSpace(req.AgentID)
+	if agentID != "" {
+		ag, err := s.agentRepo.GetAgentByID(ctx, agentID, tenantUserID)
+		if err != nil {
+			return nil, err
+		}
+		if ag == nil {
+			return nil, fmt.Errorf("agent not found or unauthorized")
+		}
+	} else {
+		ag, err := s.agentRepo.GetSystemGlobalAgent(ctx, tenantUserID)
+		if err != nil {
+			return nil, err
+		}
+		if ag == nil {
+			return nil, fmt.Errorf("system agent not found")
+		}
+		agentID = strings.TrimSpace(ag.AgentId)
+	}
+
+	pipeReq := &pipeline.SmartCommandRequest{
+		TenantUserID: tenantUserID,
+		Command:      command,
+		AgentID:      agentID,
+	}
+
+	pipeCtx := context.WithValue(ctx, "tenant_user_id", tenantUserID)
+	if agentID != "" {
+		pipeCtx = context.WithValue(pipeCtx, "agent_id", agentID)
+	}
+	result, err := s.smartCommandPipe.Execute(pipeCtx, pipeReq)
+	if err != nil {
+		return nil, err
+	}
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return &respond.SmartCommandRespond{
+		Intent:       result.Intent,
+		Action:       result.Params.Action,
+		TriggerType:  result.Params.TriggerType,
+		TriggerValue: result.Params.TriggerValue,
+		Prompt:       result.Params.Prompt,
+		AgentID:      result.Params.AgentID,
+		ToolName:     result.ToolName,
+		ToolResult:   result.ToolResult,
 	}, nil
 }

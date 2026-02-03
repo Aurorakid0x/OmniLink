@@ -72,6 +72,7 @@ func init() {
 	var aiQueryH *aiHTTP.QueryHandler
 	var aiAssistantH *aiHTTP.AssistantHandler
 	var assistantPipeline *aiPipeline.AssistantPipeline
+	var smartCommandPipeline *aiPipeline.SmartCommandPipeline
 	var aiAsyncIngest aiService.AsyncIngestService
 	var userLifecycleSvc aiService.UserLifecycleService // 用户生命周期服务（用于新用户AI助手初始化）
 	var aiJobSvc aiService.AIJobService
@@ -164,7 +165,11 @@ func init() {
 						if err != nil {
 							zlog.Warn("ai assistant pipeline init failed: " + err.Error())
 						} else {
-							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline)
+							smartCommandPipeline, err = aiPipeline.NewSmartCommandPipeline(chatModel, nil)
+							if err != nil {
+								zlog.Warn("ai smart command pipeline init failed: " + err.Error())
+							}
+							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 							aiAgentRepo = agentRepo
 							aiJobRepo = aiPersistence.NewAIJobRepository(initial.GormDB)
@@ -264,6 +269,19 @@ func init() {
 		if assistantPipeline != nil {
 			assistantPipeline.SetTools(allTools)
 		}
+		if smartCommandPipeline != nil {
+			var jobTools []tool.BaseTool
+			for _, t := range allTools {
+				info, err := t.Info(context.Background())
+				if err != nil || info == nil {
+					continue
+				}
+				if info.Name == "manage_ai_job" {
+					jobTools = append(jobTools, t)
+				}
+			}
+			smartCommandPipeline.SetTools(jobTools)
+		}
 
 		zlog.Info("MCP initialization completed")
 	}
@@ -306,6 +324,7 @@ func init() {
 			aiGroup.GET("/sessions/:session_id/messages", aiAssistantH.GetSessionMessages)
 			aiGroup.POST("/chat", aiAssistantH.Chat)
 			aiGroup.POST("/chat/stream", aiAssistantH.ChatStream)
+			aiGroup.POST("/command", aiAssistantH.SmartCommand)
 			aiGroup.POST("/agents", aiAssistantH.CreateAgent)
 			aiGroup.POST("/sessions", aiAssistantH.CreateSession)
 		}

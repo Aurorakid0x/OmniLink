@@ -99,3 +99,14 @@ type SystemSessionRespond struct {
 	AgentID   string `json:"agent_id"`
 	Title     string `json:"title"`
 }
+
+type SmartCommandRespond struct {
+	Intent       string `json:"intent"`
+	Action       string `json:"action"`
+	TriggerType  string `json:"trigger_type"`
+	TriggerValue string `json:"trigger_value"`
+	Prompt       string `json:"prompt"`
+	AgentID      string `json:"agent_id"`
+	ToolName     string `json:"tool_name"`
+	ToolResult   string `json:"tool_result"`
+}

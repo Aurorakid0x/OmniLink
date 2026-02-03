@@ -22,3 +22,7 @@ type AssistantAgentListRequest struct {
 	Offset int `json:"offset"` // 偏移量（默认0）
 }
 
+type SmartCommandRequest struct {
+	Command string `json:"command"`
+	AgentID string `json:"agent_id"`
+}
