@@ -22,6 +22,15 @@ func NewAssistantSessionRepository(db *gorm.DB) repository.AssistantSessionRepos
 }
 
 func (r *assistantSessionRepositoryImpl) CreateSession(ctx context.Context, session *assistant.AIAssistantSession) error {
+	if session == nil {
+		return nil
+	}
+	if strings.TrimSpace(session.ContextConfigJson) == "" {
+		session.ContextConfigJson = "{}"
+	}
+	if strings.TrimSpace(session.MetadataJson) == "" {
+		session.MetadataJson = "{}"
+	}
 	return r.db.WithContext(ctx).Create(session).Error
 }
 

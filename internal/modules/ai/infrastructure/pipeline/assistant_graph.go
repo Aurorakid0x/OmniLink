@@ -368,6 +368,18 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 
 	toolStart := time.Now()
 
+	toolCtx := ctx
+	if st.Req != nil {
+		tenantUserID := strings.TrimSpace(st.Req.TenantUserID)
+		if tenantUserID != "" && toolCtx.Value("tenant_user_id") == nil {
+			toolCtx = context.WithValue(toolCtx, "tenant_user_id", tenantUserID)
+		}
+		agentID := strings.TrimSpace(st.Req.AgentID)
+		if agentID != "" && toolCtx.Value("agent_id") == nil {
+			toolCtx = context.WithValue(toolCtx, "agent_id", agentID)
+		}
+	}
+
 	// 执行所有工具调用
 	for _, toolCall := range st.LastResponse.ToolCalls {
 		toolName := toolCall.Function.Name
@@ -382,12 +394,12 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 		}
 
 		for _, t := range p.tools {
-			info, _ := t.Info(ctx)
+			info, _ := t.Info(toolCtx)
 			if info != nil && info.Name == toolName {
 				found = true
 				// 执行工具
 				if invokable, ok := t.(tool.InvokableTool); ok {
-					res, err := invokable.InvokableRun(ctx, toolArgs)
+					res, err := invokable.InvokableRun(toolCtx, toolArgs)
 					if err != nil {
 						runErr = err
 						toolResp = fmt.Sprintf("Tool execution error: %v", err)
