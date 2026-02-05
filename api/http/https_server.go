@@ -78,6 +78,7 @@ func init() {
 	var aiJobSvc aiService.AIJobService
 	var aiAgentRepo aiRepository.AgentRepository
 	var aiJobRepo aiRepository.AIJobRepository
+	var aiSessionRepo aiRepository.AssistantSessionRepository
 	if initial.MilvusClient != nil {
 		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
@@ -172,8 +173,9 @@ func init() {
 							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 							aiAgentRepo = agentRepo
+							aiSessionRepo = sessionRepo
 							aiJobRepo = aiPersistence.NewAIJobRepository(initial.GormDB)
-							aiJobSvc = aiService.NewAIJobService(aiJobRepo, assistantSvc)
+							aiJobSvc = aiService.NewAIJobService(aiJobRepo, sessionRepo, assistantSvc)
 						}
 					}
 				}
@@ -224,15 +226,16 @@ func init() {
 					EnableSessionTools: conf.MCPConfig.BuiltinServer.EnableSessionTools,
 				},
 				omniMcpServer.BuiltinServerDependencies{
-					ContactSvc: contactSvc,
-					GroupSvc:   groupSvc,
-					MessageSvc: messageSvc,
-					SessionSvc: sessionSvc,
-					UserRepo:   userRepo,
-					GroupRepo:  groupRepo,
-					JobSvc:     aiJobSvc,
-					AgentRepo:  aiAgentRepo,
-					WsHub:      wsHub,
+					ContactSvc:    contactSvc,
+					GroupSvc:      groupSvc,
+					MessageSvc:    messageSvc,
+					SessionSvc:    sessionSvc,
+					UserRepo:      userRepo,
+					GroupRepo:     groupRepo,
+					JobSvc:        aiJobSvc,
+					AgentRepo:     aiAgentRepo,
+					AISessionRepo: aiSessionRepo,
+					WsHub:         wsHub,
 				},
 			)
 

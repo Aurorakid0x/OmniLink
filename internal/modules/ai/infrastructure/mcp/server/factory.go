@@ -25,15 +25,16 @@ type BuiltinServerConfig struct {
 
 // BuiltinServerDependencies 内置服务器依赖
 type BuiltinServerDependencies struct {
-	ContactSvc contactService.ContactService
-	GroupSvc   contactService.GroupService
-	MessageSvc chatService.MessageService
-	SessionSvc chatService.SessionService
-	UserRepo   userRepository.UserInfoRepository
-	GroupRepo  contactRepository.GroupInfoRepository
-	JobSvc     aiService.AIJobService
-	AgentRepo  aiRepository.AgentRepository
-	WsHub      *ws.Hub
+	ContactSvc    contactService.ContactService
+	GroupSvc      contactService.GroupService
+	MessageSvc    chatService.MessageService
+	SessionSvc    chatService.SessionService
+	UserRepo      userRepository.UserInfoRepository
+	GroupRepo     contactRepository.GroupInfoRepository
+	JobSvc        aiService.AIJobService
+	AgentRepo     aiRepository.AgentRepository
+	AISessionRepo aiRepository.AssistantSessionRepository
+	WsHub         *ws.Hub
 }
 
 // NewBuiltinMCPServer 创建并配置内置 MCP Server
@@ -59,8 +60,8 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 		actionHandler.RegisterTools(s)
 	}
 
-	if deps.JobSvc != nil && deps.AgentRepo != nil {
-		jobHandler := mcpHandlers.NewJobManagementHandler(deps.JobSvc, deps.AgentRepo)
+	if deps.JobSvc != nil && deps.AgentRepo != nil && deps.AISessionRepo != nil {
+		jobHandler := mcpHandlers.NewJobManagementHandler(deps.JobSvc, deps.AgentRepo, deps.AISessionRepo)
 		jobHandler.RegisterTools(s)
 	}
 

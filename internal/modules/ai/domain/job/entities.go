@@ -24,6 +24,7 @@ type AIJobDef struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	TenantUserID string    `gorm:"column:tenant_user_id;index;type:varchar(64)"` // 规则归属人
 	AgentID      string    `gorm:"column:agent_id;not null;type:varchar(64)"`    // 执行的 Agent
+	SessionID    string    `gorm:"column:session_id;index;type:char(20)"`
 	Title        string    `gorm:"column:title;type:varchar(100)"`
 	TriggerType  int       `gorm:"column:trigger_type;not null"`      // 0:Once, 1:Cron, 2:Event
 	CronExpr     string    `gorm:"column:cron_expr;type:varchar(64)"` // e.g. "0 8 * * *"
@@ -44,6 +45,7 @@ type AIJobInst struct {
 	JobDefID      int64      `gorm:"column:job_def_id;index"` // 关联的规则ID
 	TenantUserID  string     `gorm:"column:tenant_user_id;index;type:varchar(64)"`
 	AgentID       string     `gorm:"column:agent_id;type:varchar(64)"`
+	SessionID     string     `gorm:"column:session_id;index;type:char(20)"`
 	Prompt        string     `gorm:"column:prompt;type:text"`
 	Status        int        `gorm:"column:status;default:0;index"`
 	TriggerAt     time.Time  `gorm:"column:trigger_at;index"` // 计划执行时间

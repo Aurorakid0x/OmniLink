@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"OmniLink/internal/modules/ai/application/service"
@@ -15,25 +16,27 @@ import (
 )
 
 type JobManagementHandler struct {
-	jobSvc    service.AIJobService
-	agentRepo repository.AgentRepository
+	jobSvc      service.AIJobService
+	agentRepo   repository.AgentRepository
+	sessionRepo repository.AssistantSessionRepository
 }
 
-func NewJobManagementHandler(svc service.AIJobService, agentRepo repository.AgentRepository) *JobManagementHandler {
+func NewJobManagementHandler(svc service.AIJobService, agentRepo repository.AgentRepository, sessionRepo repository.AssistantSessionRepository) *JobManagementHandler {
 	return &JobManagementHandler{
-		jobSvc:    svc,
-		agentRepo: agentRepo,
+		jobSvc:      svc,
+		agentRepo:   agentRepo,
+		sessionRepo: sessionRepo,
 	}
 }
 
 func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 	// 1. Tool: manage_ai_job (核心创建/删除工具)
 	s.AddTool(mcp.NewTool("manage_ai_job",
-		mcp.WithDescription("创建或管理 AI 自动化任务。支持定时(cron)、一次性(once)、事件驱动(event)三种模式。"),
+		mcp.WithDescription("创建或管理 AI 自动化任务。支持定时(cron)、一次性(once)、事件驱动(event)三种模式。用于生成发送给Agent执行的指令。"),
 		mcp.WithString("action", mcp.Required(), mcp.Description("操作类型: create | delete")),
 		mcp.WithString("trigger_type", mcp.Description("触发类型: once | cron | event")),
 		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传5段表达式(0 8 * * *), event传事件key(user_login)")),
-		mcp.WithString("prompt", mcp.Description("任务执行时发送给Agent的指令Prompt")),
+		mcp.WithString("prompt", mcp.Description("发送给Agent执行的指令Prompt（由Agent决定是否调用push_notification等工具）")),
 		mcp.WithString("agent_id", mcp.Description("执行任务的AgentID (可选，默认使用当前Agent)")),
 		mcp.WithNumber("job_def_id", mcp.Description("删除任务时传入的任务定义ID")),
 	), h.handleManageJob)
@@ -47,6 +50,10 @@ func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 	s.AddTool(mcp.NewTool("list_supported_events",
 		mcp.WithDescription("列出系统支持的所有触发事件 Key"),
 	), h.handleListEvents)
+
+	s.AddTool(mcp.NewTool("get_current_time",
+		mcp.WithDescription("获取当前系统时间"),
+	), h.handleGetCurrentTime)
 }
 
 func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -105,7 +112,29 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 		if ag == nil {
 			return mcp.NewToolResultError("agent_id not found or unauthorized"), nil
 		}
-
+		if h.sessionRepo == nil {
+			return mcp.NewToolResultError("session repo is nil"), nil
+		}
+		session, err := h.sessionRepo.GetSystemGlobalSession(ctx, userID)
+		if err != nil {
+			return mcp.NewToolResultError("failed to get system session: " + err.Error()), nil
+		}
+		if session == nil {
+			return mcp.NewToolResultError("system session not found"), nil
+		}
+		if strings.TrimSpace(session.AgentId) == "" {
+			return mcp.NewToolResultError("system session missing agent_id"), nil
+		}
+		if targetAgentID != "" && strings.TrimSpace(session.AgentId) != targetAgentID {
+			return mcp.NewToolResultError("agent_id does not match system session agent_id"), nil
+		}
+		if targetAgentID == "" {
+			targetAgentID = strings.TrimSpace(session.AgentId)
+		}
+		sessionID := strings.TrimSpace(session.SessionId)
+		if sessionID == "" {
+			return mcp.NewToolResultError("system session_id is empty"), nil
+		}
 		switch triggerType {
 		case "once":
 			t, err := time.Parse(time.RFC3339, triggerValue)
@@ -116,7 +145,7 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 					return mcp.NewToolResultError("invalid time format, use ISO8601 (2006-01-02T15:04:05Z)"), nil
 				}
 			}
-			if err := h.jobSvc.CreateOneTimeJob(ctx, userID, targetAgentID, prompt, t); err != nil {
+			if err := h.jobSvc.CreateOneTimeJob(ctx, userID, targetAgentID, sessionID, prompt, t); err != nil {
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf("Created One-time Job at %s", t.Format(time.RFC3339))), nil
@@ -126,7 +155,7 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 			if _, err := cron.ParseStandard(triggerValue); err != nil {
 				return mcp.NewToolResultError("invalid cron expression (5 fields required)"), nil
 			}
-			if err := h.jobSvc.CreateCronJob(ctx, userID, targetAgentID, prompt, triggerValue); err != nil {
+			if err := h.jobSvc.CreateCronJob(ctx, userID, targetAgentID, sessionID, prompt, triggerValue); err != nil {
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf("Created Cron Job: %s", triggerValue)), nil
@@ -135,7 +164,7 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 			if triggerValue == "" {
 				return mcp.NewToolResultError("event key is required"), nil
 			}
-			if err := h.jobSvc.CreateEventJob(ctx, userID, targetAgentID, prompt, triggerValue); err != nil {
+			if err := h.jobSvc.CreateEventJob(ctx, userID, targetAgentID, sessionID, prompt, triggerValue); err != nil {
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf("Created Event Job: %s", triggerValue)), nil
@@ -193,4 +222,13 @@ func (h *JobManagementHandler) handleListEvents(ctx context.Context, request mcp
 		"group_mention - 群里被@时触发 (Todo)",
 	}
 	return mcp.NewToolResultText(fmt.Sprintf("Supported Events:\n%v", events)), nil
+}
+
+func (h *JobManagementHandler) handleGetCurrentTime(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	now := time.Now()
+	return mcp.NewToolResultJSON(map[string]interface{}{
+		"rfc3339":  now.Format(time.RFC3339),
+		"unix":     now.Unix(),
+		"timezone": now.Location().String(),
+	})
 }
