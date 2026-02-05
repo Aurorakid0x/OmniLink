@@ -42,7 +42,6 @@ type assistantState struct {
 	IterationCount int // 当前循环次数
 	MaxIterations  int
 	LastResponse   *schema.Message
-	TaskSuggestion *TaskSuggestion
 }
 
 const defaultPersonaPrompt = "你是 OmniLink 的全局 AI 个人助手，回答必须基于用户权限内的聊天/联系人/群组信息。"
@@ -56,12 +55,6 @@ func (p *AssistantPipeline) loadMemoryNode(ctx context.Context, req *AssistantRe
 		MaxIterations:  10, // 默认最多10轮ReAct循环
 		IterationCount: 0,
 	}
-	zlog.Info("assistant load memory start",
-		zap.String("query_id", st.QueryID),
-		zap.String("tenant_user_id", strings.TrimSpace(req.TenantUserID)),
-		zap.String("session_id", strings.TrimSpace(req.SessionID)),
-		zap.String("agent_id", strings.TrimSpace(req.AgentID)),
-		zap.Int("question_len", len(strings.TrimSpace(req.Question))))
 
 	// 1. 校验必填参数
 	if strings.TrimSpace(req.TenantUserID) == "" {
@@ -94,11 +87,6 @@ func (p *AssistantPipeline) loadMemoryNode(ctx context.Context, req *AssistantRe
 		st.SessionID = newSession.SessionId
 		st.IsNewSession = true
 		st.Messages = []*assistant.AIAssistantMessage{} // 新会话无历史
-		zlog.Info("assistant session created",
-			zap.String("query_id", st.QueryID),
-			zap.String("session_id", st.SessionID),
-			zap.String("tenant_user_id", req.TenantUserID),
-			zap.String("agent_id", newSession.AgentId))
 	} else {
 		// 加载现有会话
 		sess, err := p.sessionRepo.GetSessionByID(ctx, sessionID, req.TenantUserID)
@@ -123,12 +111,6 @@ func (p *AssistantPipeline) loadMemoryNode(ctx context.Context, req *AssistantRe
 			return st, nil
 		}
 		st.Messages = messages
-		zlog.Info("assistant session loaded",
-			zap.String("query_id", st.QueryID),
-			zap.String("session_id", st.SessionID),
-			zap.String("tenant_user_id", req.TenantUserID),
-			zap.String("agent_id", req.AgentID),
-			zap.Int("history_count", len(messages)))
 	}
 
 	zlog.Info("assistant load memory done",
@@ -148,12 +130,6 @@ func (p *AssistantPipeline) retrieveNode(ctx context.Context, st *assistantState
 	req := st.Req
 	scope := normalizeScope(req.Scope)
 	topK := normalizeTopK(req.TopK)
-	zlog.Info("assistant retrieve start",
-		zap.String("query_id", st.QueryID),
-		zap.String("tenant_user_id", req.TenantUserID),
-		zap.String("scope", scope),
-		zap.Int("top_k", topK),
-		zap.Int("source_keys", len(req.SourceKeys)))
 
 	// 获取知识库ID
 	kbID, err := p.ensureKnowledgeBase(ctx, req.TenantUserID, scope)
@@ -257,18 +233,10 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 			}
 		}
 	}
-	// 在对话提示里要求模型输出结构化任务建议，供后置路由解析
-	personaPrompt = fmt.Sprintf("%s\n请在最终回答末尾追加%s{\"should_create\":true|false,\"command\":\"...\"}%s。若判断用户意图是创建提醒、定时或事件任务，则should_create为true，否则为false。command填写用于创建任务的自然语言指令。", personaPrompt, taskSuggestionStart, taskSuggestionEnd)
 	promptMsgs = append(promptMsgs, schema.Message{
 		Role:    schema.System,
 		Content: personaPrompt,
 	})
-	zlog.Info("assistant build prompt start",
-		zap.String("query_id", st.QueryID),
-		zap.String("tenant_user_id", st.Req.TenantUserID),
-		zap.String("agent_id", agentID),
-		zap.Int("history_count", len(st.Messages)),
-		zap.Int("retrieved_chunks", len(st.RetrievedCtx)))
 
 	// 2. 历史消息（最近N轮）
 	for _, msg := range st.Messages {
@@ -348,11 +316,6 @@ func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantStat
 	}
 
 	llmStart := time.Now()
-	zlog.Info("assistant chat model start",
-		zap.String("query_id", st.QueryID),
-		zap.Int("iteration", st.IterationCount+1),
-		zap.Int("prompt_msgs", len(st.PromptMsgs)),
-		zap.Int("tools", len(st.Tools)))
 
 	promptMsgs := make([]*schema.Message, len(st.PromptMsgs))
 	for i := range st.PromptMsgs {
@@ -372,25 +335,9 @@ func (p *AssistantPipeline) chatModelNode(ctx context.Context, st *assistantStat
 		return st, nil
 	}
 
-	if resp != nil && resp.Content != "" {
-		// 解析并剥离结构化建议，避免污染用户可见回答
-		sugg, cleaned := parseTaskSuggestion(resp.Content)
-		if sugg != nil {
-			st.TaskSuggestion = sugg
-		}
-		resp.Content = cleaned
-	}
-
+	// 保存LLM响应到state（不管是否有tool call）
 	st.LastResponse = resp
 	st.PromptMsgs = append(st.PromptMsgs, *resp)
-	if resp != nil && resp.ResponseMeta != nil && resp.ResponseMeta.Usage != nil {
-		usage := resp.ResponseMeta.Usage
-		zlog.Info("assistant chat model usage",
-			zap.String("query_id", st.QueryID),
-			zap.Int("prompt_tokens", usage.PromptTokens),
-			zap.Int("answer_tokens", usage.CompletionTokens),
-			zap.Int("total_tokens", usage.TotalTokens))
-	}
 
 	// 累加LLM耗时
 	st.LLMMs += time.Since(llmStart).Milliseconds()
@@ -420,9 +367,6 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 	}
 
 	toolStart := time.Now()
-	zlog.Info("assistant tools node start",
-		zap.String("query_id", st.QueryID),
-		zap.Int("tool_calls", len(st.LastResponse.ToolCalls)))
 
 	// 执行所有工具调用
 	for _, toolCall := range st.LastResponse.ToolCalls {
@@ -436,10 +380,6 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 		if st.StreamEmitter != nil {
 			st.StreamEmitter("tool_call", map[string]string{"tool_name": toolName})
 		}
-		zlog.Info("assistant tool call start",
-			zap.String("query_id", st.QueryID),
-			zap.String("tool_name", toolName),
-			zap.Int("args_len", len(toolArgs)))
 
 		for _, t := range p.tools {
 			info, _ := t.Info(ctx)
@@ -465,12 +405,6 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 		if !found {
 			runErr = fmt.Errorf("tool not found")
 			toolResp = fmt.Sprintf("Tool '%s' not found", toolName)
-		}
-		if runErr != nil {
-			zlog.Info("assistant tool call error",
-				zap.String("query_id", st.QueryID),
-				zap.String("tool_name", toolName),
-				zap.Error(runErr))
 		}
 
 		if st.StreamEmitter != nil {
@@ -527,22 +461,6 @@ func (p *AssistantPipeline) persistNode(ctx context.Context, st *assistantState,
 			}
 		}
 	}
-	if st.Answer != "" {
-		// 再次兜底解析，避免流式/非流式路径遗漏结构化建议
-		sugg, cleaned := parseTaskSuggestion(st.Answer)
-		if sugg != nil {
-			st.TaskSuggestion = sugg
-		}
-		st.Answer = cleaned
-		if st.LastResponse != nil {
-			st.LastResponse.Content = cleaned
-		}
-	}
-	zlog.Info("assistant persist start",
-		zap.String("query_id", st.QueryID),
-		zap.String("session_id", st.SessionID),
-		zap.Int("answer_len", len(st.Answer)),
-		zap.Int("citations", len(st.Citations)))
 
 	now := time.Now()
 
@@ -592,47 +510,6 @@ func (p *AssistantPipeline) persistNode(ctx context.Context, st *assistantState,
 		zlog.Error("failed to update session timestamp", zap.Error(err))
 	}
 
-	if st.TaskSuggestion != nil && st.TaskSuggestion.ShouldCreate && p.smartCommandPipe != nil {
-		// 后置路由：先正常对话，必要时再调用智能指令流水线创建任务
-		command := strings.TrimSpace(st.TaskSuggestion.Command)
-		if command == "" {
-			command = strings.TrimSpace(st.Req.Question)
-		}
-		agentID := strings.TrimSpace(st.Req.AgentID)
-		if agentID == "" && p.agentRepo != nil {
-			if ag, err := p.agentRepo.GetSystemGlobalAgent(ctx, st.Req.TenantUserID); err == nil && ag != nil {
-				agentID = strings.TrimSpace(ag.AgentId)
-			}
-		}
-		pipeReq := &SmartCommandRequest{
-			TenantUserID: st.Req.TenantUserID,
-			Command:      command,
-			AgentID:      agentID,
-		}
-		pipeCtx := context.WithValue(ctx, "tenant_user_id", st.Req.TenantUserID)
-		if agentID != "" {
-			pipeCtx = context.WithValue(pipeCtx, "agent_id", agentID)
-		}
-		_, _ = p.smartCommandPipe.Execute(pipeCtx, pipeReq)
-		zlog.Info("assistant post route executed",
-			zap.String("query_id", st.QueryID),
-			zap.String("tenant_user_id", st.Req.TenantUserID),
-			zap.String("agent_id", agentID),
-			zap.Int("command_len", len(command)))
-	} else if st.TaskSuggestion == nil {
-		zlog.Info("assistant post route skipped",
-			zap.String("query_id", st.QueryID),
-			zap.String("reason", "no_task_suggestion"))
-	} else if !st.TaskSuggestion.ShouldCreate {
-		zlog.Info("assistant post route skipped",
-			zap.String("query_id", st.QueryID),
-			zap.String("reason", "should_create_false"))
-	} else if p.smartCommandPipe == nil {
-		zlog.Info("assistant post route skipped",
-			zap.String("query_id", st.QueryID),
-			zap.String("reason", "smart_command_pipeline_nil"))
-	}
-
 	zlog.Info("assistant persist done",
 		zap.String("session_id", st.SessionID),
 		zap.String("query_id", st.QueryID),
@@ -667,38 +544,6 @@ func buildContextString(citations []respond.CitationEntry) string {
 		}
 	}
 	return sb.String()
-}
-
-// TaskSuggestion LLM 返回的结构化任务建议
-type TaskSuggestion struct {
-	ShouldCreate bool   `json:"should_create"`
-	Command      string `json:"command"`
-}
-
-const (
-	// 建议标记用于与正文隔离，便于解析与清理
-	taskSuggestionStart = "<task_suggestion>"
-	taskSuggestionEnd   = "</task_suggestion>"
-)
-
-// parseTaskSuggestion 从回答中解析建议并返回清理后的正文
-func parseTaskSuggestion(content string) (*TaskSuggestion, string) {
-	start := strings.Index(content, taskSuggestionStart)
-	if start < 0 {
-		return nil, strings.TrimSpace(content)
-	}
-	end := strings.Index(content[start+len(taskSuggestionStart):], taskSuggestionEnd)
-	if end < 0 {
-		return nil, strings.TrimSpace(content[:start])
-	}
-	end = start + len(taskSuggestionStart) + end
-	raw := strings.TrimSpace(content[start+len(taskSuggestionStart) : end])
-	var sugg TaskSuggestion
-	if err := json.Unmarshal([]byte(raw), &sugg); err != nil {
-		return nil, strings.TrimSpace(content[:start] + content[end+len(taskSuggestionEnd):])
-	}
-	cleaned := strings.TrimSpace(content[:start] + content[end+len(taskSuggestionEnd):])
-	return &sugg, cleaned
 }
 
 func parseToolCall(call schema.ToolCall) (string, map[string]interface{}, error) {

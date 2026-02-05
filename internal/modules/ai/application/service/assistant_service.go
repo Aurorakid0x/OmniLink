@@ -161,10 +161,9 @@ func (s *assistantServiceImpl) ChatStream(ctx context.Context, req request.Assis
 			return
 		}
 
-		// 读取流式输出，并过滤结构化建议片段
+		// 读取流式输出
 		llmStart := time.Now()
 		fullAnswer := ""
-		visible := ""
 		for {
 			chunk, err := streamReader.Recv()
 			if err != nil {
@@ -172,16 +171,7 @@ func (s *assistantServiceImpl) ChatStream(ctx context.Context, req request.Assis
 			}
 			token := chunk.Content
 			fullAnswer += token
-			cleaned := stripTaskSuggestionForStream(fullAnswer)
-			if len(cleaned) > len(visible) {
-				delta := cleaned[len(visible):]
-				visible = cleaned
-				if delta != "" {
-					eventChan <- StreamEvent{Event: "delta", Data: map[string]string{"token": delta}}
-				}
-			} else if len(cleaned) < len(visible) {
-				visible = cleaned
-			}
+			eventChan <- StreamEvent{Event: "delta", Data: map[string]string{"token": token}}
 		}
 		llmMs := time.Since(llmStart).Milliseconds()
 
@@ -279,20 +269,6 @@ func truncateSummary(content string, maxLen int) string {
 		return string(runes[:maxLen]) + "..."
 	}
 	return content
-}
-
-// stripTaskSuggestionForStream 仅用于流式展示层，去掉结构化建议区段
-func stripTaskSuggestionForStream(content string) string {
-	start := strings.Index(content, "<task_suggestion>")
-	if start < 0 {
-		return content
-	}
-	end := strings.Index(content[start+len("<task_suggestion>"):], "</task_suggestion>")
-	if end < 0 {
-		return content[:start]
-	}
-	end = start + len("<task_suggestion>") + end
-	return content[:start] + content[end+len("</task_suggestion>"):]
 }
 
 func parseCitationsJSON(raw string) []respond.CitationEntry {
