@@ -9,11 +9,13 @@ import (
 	"OmniLink/internal/modules/ai/application/dto/respond"
 	"OmniLink/internal/modules/ai/domain/repository"
 	userRepository "OmniLink/internal/modules/user/domain/repository"
+	"OmniLink/pkg/zlog"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"go.uber.org/zap"
 )
 
 // AssistantRequest Assistant Pipeline 输入请求
@@ -49,16 +51,17 @@ type StreamEmitter func(event string, data map[string]string)
 
 // AssistantPipeline AI助手Pipeline（基于Eino Graph）
 type AssistantPipeline struct {
-	sessionRepo  repository.AssistantSessionRepository
-	messageRepo  repository.AssistantMessageRepository
-	agentRepo    repository.AgentRepository
-	ragRepo      repository.RAGRepository
-	userRepo     userRepository.UserInfoRepository
-	retrievePipe *RetrievePipeline
-	chatModel    model.BaseChatModel
-	chatMeta     ChatModelMeta
-	tools        []tool.BaseTool
-	r            compose.Runnable[*AssistantRequest, *AssistantResult]
+	sessionRepo      repository.AssistantSessionRepository
+	messageRepo      repository.AssistantMessageRepository
+	agentRepo        repository.AgentRepository
+	ragRepo          repository.RAGRepository
+	userRepo         userRepository.UserInfoRepository
+	retrievePipe     *RetrievePipeline
+	chatModel        model.BaseChatModel
+	chatMeta         ChatModelMeta
+	tools            []tool.BaseTool
+	smartCommandPipe *SmartCommandPipeline
+	r                compose.Runnable[*AssistantRequest, *AssistantResult]
 }
 
 // ChatModelMeta ChatModel元数据
@@ -109,6 +112,11 @@ func (p *AssistantPipeline) SetTools(tools []tool.BaseTool) {
 	p.tools = tools
 }
 
+// 注入智能指令流水线，用于对话后的后置路由
+func (p *AssistantPipeline) SetSmartCommandPipeline(pipe *SmartCommandPipeline) {
+	p.smartCommandPipe = pipe
+}
+
 // Execute 执行Assistant Pipeline（非流式）
 func (p *AssistantPipeline) Execute(ctx context.Context, req *AssistantRequest) (*AssistantResult, error) {
 	if req == nil {
@@ -117,7 +125,33 @@ func (p *AssistantPipeline) Execute(ctx context.Context, req *AssistantRequest) 
 	if p.r == nil {
 		return nil, fmt.Errorf("pipeline runnable is nil")
 	}
-	return p.r.Invoke(ctx, req)
+	start := time.Now()
+	zlog.Info("assistant pipeline invoke start",
+		zap.String("tenant_user_id", strings.TrimSpace(req.TenantUserID)),
+		zap.String("session_id", strings.TrimSpace(req.SessionID)),
+		zap.String("agent_id", strings.TrimSpace(req.AgentID)),
+		zap.Int("question_len", len(strings.TrimSpace(req.Question))))
+	result, err := p.r.Invoke(ctx, req)
+	if err != nil {
+		zlog.Info("assistant pipeline invoke error",
+			zap.String("tenant_user_id", strings.TrimSpace(req.TenantUserID)),
+			zap.Error(err),
+			zap.Int64("cost_ms", time.Since(start).Milliseconds()))
+		return nil, err
+	}
+	if result != nil {
+		zlog.Info("assistant pipeline invoke done",
+			zap.String("tenant_user_id", strings.TrimSpace(req.TenantUserID)),
+			zap.String("session_id", result.SessionID),
+			zap.String("query_id", result.QueryID),
+			zap.Int("answer_len", len(result.Answer)),
+			zap.Int("citations", len(result.Citations)),
+			zap.Int("prompt_tokens", result.TokenStats.PromptTokens),
+			zap.Int("answer_tokens", result.TokenStats.AnswerTokens),
+			zap.Int("total_tokens", result.TokenStats.TotalTokens),
+			zap.Int64("cost_ms", time.Since(start).Milliseconds()))
+	}
+	return result, nil
 }
 
 // ExecuteStream 执行Assistant Pipeline（流式 + ReAct循环）
@@ -193,15 +227,43 @@ func (p *AssistantPipeline) ExecuteStream(ctx context.Context, req *AssistantReq
 
 // PersistStreamResult 持久化流式结果
 func (p *AssistantPipeline) PersistStreamResult(ctx context.Context, st *assistantState, fullAnswer string, llmMs int64) (*AssistantResult, error) {
-	st.Answer = fullAnswer
+	if fullAnswer != "" {
+		// 流式结果需要解析并剥离结构化建议，避免前端展示污染
+		sugg, cleaned := parseTaskSuggestion(fullAnswer)
+		if sugg != nil {
+			st.TaskSuggestion = sugg
+		}
+		st.Answer = cleaned
+	} else {
+		st.Answer = fullAnswer
+	}
 	st.LLMMs = llmMs
+	zlog.Info("assistant stream persist start",
+		zap.String("query_id", st.QueryID),
+		zap.String("session_id", st.SessionID),
+		zap.Int("answer_len", len(st.Answer)),
+		zap.Int("citations", len(st.Citations)),
+		zap.Int64("llm_ms", st.LLMMs))
 
 	// Node 5: Persist
 	result, err := p.persistNode(ctx, st)
 	if err != nil || (result != nil && result.Err != nil) {
+		if err != nil {
+			zlog.Info("assistant stream persist error",
+				zap.String("query_id", st.QueryID),
+				zap.Error(err))
+		}
 		return nil, getError(err, result.Err)
 	}
 
+	zlog.Info("assistant stream persist done",
+		zap.String("query_id", st.QueryID),
+		zap.String("session_id", result.SessionID),
+		zap.Int("answer_len", len(result.Answer)),
+		zap.Int("citations", len(result.Citations)),
+		zap.Int("prompt_tokens", result.TokenStats.PromptTokens),
+		zap.Int("answer_tokens", result.TokenStats.AnswerTokens),
+		zap.Int("total_tokens", result.TokenStats.TotalTokens))
 	return result, nil
 }
 

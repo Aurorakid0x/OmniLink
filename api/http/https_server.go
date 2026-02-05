@@ -169,6 +169,7 @@ func init() {
 							if err != nil {
 								zlog.Warn("ai smart command pipeline init failed: " + err.Error())
 							}
+							assistantPipeline.SetSmartCommandPipeline(smartCommandPipeline)
 							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 							aiAgentRepo = agentRepo
