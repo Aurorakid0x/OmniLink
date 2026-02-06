@@ -81,6 +81,9 @@ func init() {
 	var aiJobRepo aiRepository.AIJobRepository
 	var aiSessionRepo aiRepository.AssistantSessionRepository
 	var aiMessageRepo aiRepository.AssistantMessageRepository
+	aiSessionRepo = aiPersistence.NewAssistantSessionRepository(initial.GormDB)
+	aiMessageRepo = aiPersistence.NewAssistantMessageRepository(initial.GormDB)
+	aiAgentRepo = aiPersistence.NewAgentRepository(initial.GormDB)
 	if initial.MilvusClient != nil {
 		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
@@ -144,17 +147,13 @@ func init() {
 					if err != nil {
 						zlog.Warn("ai chat model init failed: " + err.Error())
 					} else {
-						sessionRepo := aiPersistence.NewAssistantSessionRepository(initial.GormDB)
-						aiMessageRepo = aiPersistence.NewAssistantMessageRepository(initial.GormDB)
-						agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
-
 						// 初始化用户生命周期服务：用于新用户注册时初始化AI助手
-						userLifecycleSvc = aiService.NewUserLifecycleService(agentRepo, sessionRepo, ragRepo)
+						userLifecycleSvc = aiService.NewUserLifecycleService(aiAgentRepo, aiSessionRepo, ragRepo)
 
 						assistantPipeline, err = aiPipeline.NewAssistantPipeline(
-							sessionRepo,
+							aiSessionRepo,
 							aiMessageRepo,
-							agentRepo,
+							aiAgentRepo,
 							ragRepo,
 							userRepo,
 							retrievePipeline,
@@ -172,16 +171,14 @@ func init() {
 							if err != nil {
 								zlog.Warn("ai smart command pipeline init failed: " + err.Error())
 							}
-							assistantSvc := aiService.NewAssistantService(sessionRepo, aiMessageRepo, agentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
+							assistantSvc := aiService.NewAssistantService(aiSessionRepo, aiMessageRepo, aiAgentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
-							aiAgentRepo = agentRepo
-							aiSessionRepo = sessionRepo
 							aiJobRepo = aiPersistence.NewAIJobRepository(initial.GormDB)
 
 							jobExecutionPipeline, err = aiPipeline.NewJobExecutionPipeline(
-								sessionRepo,
+								aiSessionRepo,
 								aiMessageRepo,
-								agentRepo,
+								aiAgentRepo,
 								ragRepo,
 								userRepo,
 								retrievePipeline,
@@ -195,7 +192,7 @@ func init() {
 							if err != nil {
 								zlog.Warn("ai job execution pipeline init failed: " + err.Error())
 							} else {
-								aiJobSvc = aiService.NewAIJobService(aiJobRepo, sessionRepo, jobExecutionPipeline)
+								aiJobSvc = aiService.NewAIJobService(aiJobRepo, aiSessionRepo, jobExecutionPipeline)
 							}
 						}
 					}
@@ -284,7 +281,14 @@ func init() {
 						zlog.Error("Failed to get builtin tools: " + err.Error())
 					} else {
 						allTools = append(allTools, builtinTools...)
-						zlog.Info(fmt.Sprintf("Registered %d builtin tools", len(builtinTools)))
+					zlog.Info(fmt.Sprintf("Registered %d builtin tools", len(builtinTools)))
+					for _, t := range builtinTools {
+						info, err := t.Info(context.Background())
+						if err != nil || info == nil {
+							continue
+						}
+						zlog.Info(fmt.Sprintf("Builtin tool: %s", info.Name))
+					}
 					}
 				}
 			}
@@ -295,7 +299,24 @@ func init() {
 			assistantPipeline.SetTools(allTools)
 		}
 		if jobExecutionPipeline != nil {
-			jobExecutionPipeline.SetTools(allTools)
+			var execTools []tool.BaseTool
+			var execToolNames []string
+			for _, t := range allTools {
+				info, err := t.Info(context.Background())
+				if err != nil || info == nil {
+					continue
+				}
+				// 禁止任务执行Pipeline调用任务管理工具，防止递归/死循环
+				if info.Name != "manage_ai_job" {
+					execTools = append(execTools, t)
+					execToolNames = append(execToolNames, info.Name)
+				}
+			}
+			jobExecutionPipeline.SetTools(execTools)
+			zlog.Info(fmt.Sprintf("JobExecution tools injected: %d", len(execToolNames)))
+			for _, name := range execToolNames {
+				zlog.Info(fmt.Sprintf("JobExecution tool: %s", name))
+			}
 		}
 		if smartCommandPipeline != nil {
 			var jobTools []tool.BaseTool

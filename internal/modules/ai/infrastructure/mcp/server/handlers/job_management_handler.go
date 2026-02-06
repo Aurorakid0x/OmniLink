@@ -38,7 +38,7 @@ func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 		mcp.WithString("action", mcp.Required(), mcp.Description("操作类型: create | delete")),
 		mcp.WithString("trigger_type", mcp.Description("触发类型: once | cron | event")),
 		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传5段表达式(0 8 * * *), event传事件key(user_login)")),
-		mcp.WithString("prompt", mcp.Description("**系统指令prompt**：任务触发时发给AI的指令，描述AI需要完成什么任务。\n示例：'用户想查询好友列表，请调用list_friends工具获取信息并告知用户'\n示例：'用户设置了早上8点的吃饭提醒，请发送友好的提醒消息'\n**注意**：这是给AI的任务描述，不是直接发给用户的消息内容")),
+		mcp.WithString("prompt", mcp.Description("**系统指令prompt**：任务触发时发给AI的指令，描述AI需要完成什么任务。\n示例：'用户想查询好友列表，请调用list_friends工具获取信息并告知用户'\n示例：'请发送友好的提醒消息'\n**注意**：这是给AI的任务描述，不是直接发给用户的消息内容，无需加入用户设置的定时时间等话语，因为只有任务触发了，prompt才会发送给AI")),
 		mcp.WithString("agent_id", mcp.Description("执行任务的AgentID (可选，默认使用当前Agent)")),
 		mcp.WithNumber("job_def_id", mcp.Description("删除任务时传入的任务定义ID")),
 	), h.handleManageJob)

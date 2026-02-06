@@ -130,13 +130,24 @@ func (p *SmartCommandPipeline) recognizeIntent(ctx context.Context, command stri
 
 func (p *SmartCommandPipeline) extractParams(ctx context.Context, command string) (SmartCommandParams, error) {
 	now := time.Now()
+	// 获取当前时区偏移量，例如 "+08:00"
+	_, offset := now.Zone()
+	hours := offset / 3600
+	minutes := (offset % 3600) / 60
+	zoneStr := fmt.Sprintf("%+02d:%02d", hours, minutes)
+
 	sys := fmt.Sprintf(`你是智能定时任务参数生成器。根据用户输入生成JSON参数，用于创建AI定时任务。
+
+当前时间（参考）：%s (时区: %s)
 
 字段说明：
 - action: 固定为 "create"
 - trigger_type: 触发类型，可选值：once（一次性）、cron（周期性）、event（事件驱动）
 - trigger_value: 触发值
-  * once类型：RFC3339格式时间，如 "%s"
+  * once类型：**必须**使用RFC3339格式的绝对时间，且**必须包含时区信息**。
+    例如：当前是 10:00，用户说"10分钟后"，你应该计算出 10:10，并输出 "%s" (注意最后的时区标识)。
+    ❌ 错误格式：2006-01-02T15:04:05 (丢失时区，会被当做UTC处理)
+    ✅ 正确格式：2006-01-02T15:04:05%s
   * cron类型：5段cron表达式，如 "0 8 * * *"（每天8点）
   * event类型：事件key，如 "user_login"
 - prompt: **这是任务触发时系统发给AI的指令prompt**，AI收到这个prompt后会执行相应的操作
@@ -146,7 +157,11 @@ func (p *SmartCommandPipeline) extractParams(ctx context.Context, command string
   * **注意**：不要把用户想要收到的消息内容直接作为prompt，而是告诉AI"用户想要什么"
 - agent_id: 可选，执行任务的Agent ID
 
-只输出JSON，不要额外文本。当前时间：%s。`, now.Format(time.RFC3339), now.Format(time.RFC3339))
+只输出JSON，不要额外文本。`,
+		now.Format(time.RFC3339),
+		zoneStr,
+		now.Add(10*time.Minute).Format("2006-01-02T15:04:05")+zoneStr,
+		zoneStr)
 	msgs := []*schema.Message{
 		{Role: schema.System, Content: sys},
 		{Role: schema.User, Content: command},

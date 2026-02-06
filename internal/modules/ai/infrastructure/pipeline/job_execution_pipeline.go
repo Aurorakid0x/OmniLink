@@ -117,6 +117,14 @@ func (p *JobExecutionPipeline) buildGraph(ctx context.Context) (compose.Runnable
 	_ = g.AddEdge(BuildPrompt, ChatModel)
 
 	shouldCallTools := func(ctx context.Context, st *jobExecutionState) (string, error) {
+		// 1. 检查是否已经完成了关键任务（如 push_notification）
+		// 如果已推送通知，无需继续循环，直接结束
+		for _, t := range st.ToolCalls {
+			if t == "push_notification" {
+				return Persist, nil
+			}
+		}
+
 		hasToolCalls := st.LastResponse != nil && len(st.LastResponse.ToolCalls) > 0
 		reachedMaxIterations := st.IterationCount >= st.MaxIterations
 		if hasToolCalls && !reachedMaxIterations {

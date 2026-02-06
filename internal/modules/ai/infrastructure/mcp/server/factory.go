@@ -9,6 +9,8 @@ import (
 	contactRepository "OmniLink/internal/modules/contact/domain/repository"
 	userRepository "OmniLink/internal/modules/user/domain/repository"
 	"OmniLink/pkg/ws"
+	"OmniLink/pkg/zlog"
+	"fmt"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -69,6 +71,13 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 	if deps.WsHub != nil && deps.AIMessageRepo != nil && deps.AISessionRepo != nil {
 		notificationHandler := mcpHandlers.NewNotificationToolHandler(deps.WsHub, deps.AIMessageRepo, deps.AISessionRepo)
 		notificationHandler.RegisterTools(s)
+		zlog.Info("MCP push_notification registered")
+	} else {
+		zlog.Warn(fmt.Sprintf("MCP push_notification skipped: wsHub=%v aiMessageRepo=%v aiSessionRepo=%v",
+			deps.WsHub != nil,
+			deps.AIMessageRepo != nil,
+			deps.AISessionRepo != nil,
+		))
 	}
 
 	return s

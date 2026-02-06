@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"OmniLink/internal/modules/ai/application/dto/respond"
 	"OmniLink/pkg/zlog"
 
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 )
@@ -112,7 +114,7 @@ func (p *JobExecutionPipeline) buildPromptNode(ctx context.Context, st *jobExecu
 		return st, nil
 	}
 
-	systemPrompt := "你是 OmniLink 的AI助手，正在后台执行用户设置的定时任务。请根据任务指令完成相应操作。\n\n**重要规则**：\n1. 如果需要向用户发送通知或结果，**必须**调用 `push_notification` 工具。\n2. 直接输出的文本内容**不会**被发送给用户，只能作为日志记录。\n3. 请务必调用工具来触达用户。"
+	systemPrompt := "你是 OmniLink 的AI助手，正在后台执行用户设置的定时任务。任务**已经触发**，现在是执行时间。\n\n**核心指令**：\n1. **直接执行**任务要求的动作（如发送通知）。\n2. **禁止**再次检查时间（get_current_time）。\n3. **禁止**试图重新创建或管理任务。\n4. 如果需要通知用户，**必须**调用 `push_notification` 工具。\n5. 不要直接输出文本回复。"
 
 	if len(st.RetrievedCtx) > 0 {
 		var ctxParts []string
@@ -197,16 +199,43 @@ func (p *JobExecutionPipeline) toolsNode(ctx context.Context, st *jobExecutionSt
 		return st, nil
 	}
 
+	toolStart := time.Now()
+
+	toolCtx := ctx
+	if st.Req != nil {
+		tenantUserID := strings.TrimSpace(st.Req.TenantUserID)
+		if tenantUserID != "" && toolCtx.Value("tenant_user_id") == nil {
+			toolCtx = context.WithValue(toolCtx, "tenant_user_id", tenantUserID)
+		}
+		agentID := strings.TrimSpace(st.Req.AgentID)
+		if agentID != "" && toolCtx.Value("agent_id") == nil {
+			toolCtx = context.WithValue(toolCtx, "agent_id", agentID)
+		}
+		sessionID := strings.TrimSpace(st.Req.SessionID)
+		if sessionID != "" && toolCtx.Value("session_id") == nil {
+			toolCtx = context.WithValue(toolCtx, "session_id", sessionID)
+		}
+	}
+
 	var toolMsgs []schema.Message
 	for _, tc := range st.LastResponse.ToolCalls {
 		toolName := strings.TrimSpace(tc.Function.Name)
 		st.ToolCalls = append(st.ToolCalls, toolName) // 记录工具调用
 
-		toolResp := p.invokeTool(ctx, tc)
+		toolResp := p.invokeTool(toolCtx, tc) // 使用 toolCtx
 		toolMsgs = append(toolMsgs, *toolResp)
+
+		zlog.Info("job execution tool executed",
+			zap.String("tool_name", toolName),
+			zap.String("tool_result", toolResp.Content))
 	}
 
 	st.PromptMsgs = append(st.PromptMsgs, toolMsgs...)
+
+	zlog.Info("job execution tools node done",
+		zap.String("session_id", st.SessionID),
+		zap.Int("tools_executed", len(st.LastResponse.ToolCalls)),
+		zap.Int64("tools_ms", time.Since(toolStart).Milliseconds()))
 
 	return st, nil
 }
@@ -222,9 +251,7 @@ func (p *JobExecutionPipeline) invokeTool(ctx context.Context, tc schema.ToolCal
 	for _, t := range p.tools {
 		info, _ := t.Info(ctx)
 		if info != nil && info.Name == toolName {
-			if invokable, ok := t.(interface {
-				InvokableRun(context.Context, string) (string, error)
-			}); ok {
+			if invokable, ok := t.(tool.InvokableTool); ok {
 				result, err := invokable.InvokableRun(ctx, toolArgs)
 				if err != nil {
 					return &schema.Message{
@@ -239,7 +266,21 @@ func (p *JobExecutionPipeline) invokeTool(ctx context.Context, tc schema.ToolCal
 					ToolCallID: tc.ID,
 				}
 			}
+			return &schema.Message{
+				Role:       schema.Tool,
+				Content:    "Tool not invokable",
+				ToolCallID: tc.ID,
+			}
 		}
+	}
+
+	zlog.Info(fmt.Sprintf("job execution tools available: %d", len(p.tools)))
+	for _, t := range p.tools {
+		info, err := t.Info(ctx)
+		if err != nil || info == nil {
+			continue
+		}
+		zlog.Info(fmt.Sprintf("job execution tool: %s", info.Name))
 	}
 
 	return &schema.Message{

@@ -68,11 +68,18 @@ func (h *NotificationToolHandler) handlePushNotification(ctx context.Context, re
 		}
 	}
 	if userID == "" {
+		zlog.Warn("push_notification missing user_id")
 		return mcp.NewToolResultError("user_id not found in context"), nil
 	}
 	if h.hub == nil {
+		zlog.Warn("push_notification hub is nil")
 		return mcp.NewToolResultError("ws hub not configured"), nil
 	}
+
+	zlog.Info("push_notification start",
+		zap.String("user_id", userID),
+		zap.String("session_id", sessionID),
+		zap.String("agent_id", agentID))
 
 	// 1. 保存消息到数据库 (role=assistant)
 	now := time.Now()
@@ -90,11 +97,14 @@ func (h *NotificationToolHandler) handlePushNotification(ctx context.Context, re
 			zlog.Error("push_notification failed to save message", zap.Error(err))
 			// 不阻断推送，但记录错误
 		} else {
+			zlog.Info("push_notification message saved", zap.Int64("msg_id", msg.Id))
 			// 更新会话时间
 			if h.sessionRepo != nil {
 				_ = h.sessionRepo.UpdateSessionUpdatedAt(ctx, sessionID)
 			}
 		}
+	} else {
+		zlog.Warn("push_notification skip save", zap.String("session_id", sessionID), zap.Bool("repo_nil", h.messageRepo == nil))
 	}
 
 	// 2. WebSocket推送

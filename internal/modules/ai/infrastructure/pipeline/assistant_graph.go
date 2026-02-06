@@ -220,7 +220,7 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 	}
 	promptMsgs = append(promptMsgs, schema.Message{
 		Role:    schema.System,
-		Content: fmt.Sprintf("### 用户上下文\n用户ID: %s\n用户名称: %s\n你可以使用以上已提供的用户信息来回答与该用户相关的问题，但不得臆造未提供的信息。", st.Req.TenantUserID, userName),
+		Content: fmt.Sprintf("### 用户上下文\n用户ID: %s\n用户名称: %s\n当前时间: %s (时区: %s)\n你可以使用以上已提供的用户信息来回答与该用户相关的问题，但不得臆造未提供的信息。", st.Req.TenantUserID, userName, time.Now().Format(time.RFC3339), time.Now().Format("-07:00")),
 	})
 
 	personaPrompt := defaultPersonaPrompt
@@ -243,6 +243,19 @@ func (p *AssistantPipeline) buildPromptNode(ctx context.Context, st *assistantSt
 			}
 		}
 	}
+
+	// 针对 manage_ai_job 的特殊指导
+	hasJobTool := false
+	for _, t := range st.Tools {
+		if t.Name == "manage_ai_job" {
+			hasJobTool = true
+			break
+		}
+	}
+	if hasJobTool {
+		personaPrompt += "\n\n[工具使用规则 - manage_ai_job]\n当你创建定时任务时，参数 `prompt` 必须是**具体的执行指令**，而不是用户的原始请求。\n❌ 错误示例：prompt='一分钟后提醒我喝水' (这会让AI在任务触发时困惑)\n✅ 正确示例：prompt='请发送内容为“记得喝水啦”的通知' (明确的任务指令)\n另外，请根据当前时间准确计算 `trigger_value`，必须包含时区信息。"
+	}
+
 	promptMsgs = append(promptMsgs, schema.Message{
 		Role:    schema.System,
 		Content: personaPrompt,
