@@ -26,6 +26,7 @@
           <div class="item-icon ai-icon">
             <el-icon><MagicStick /></el-icon>
           </div>
+          <span class="unread-dot" v-if="getUnread(systemAISession) > 0">{{ getUnread(systemAISession) }}</span>
         </div>
         <div class="item-info">
           <div class="item-top">
@@ -48,6 +49,7 @@
           <div class="item-icon ai-icon">
             <el-icon><UserFilled /></el-icon>
           </div>
+          <span class="unread-dot" v-if="getUnread(aiSession) > 0">{{ getUnread(aiSession) }}</span>
         </div>
         <div class="item-info">
           <div class="item-top">
@@ -125,7 +127,7 @@ const displayList = computed(() => {
 })
 
 const getUnread = (session) => {
-    const peerId = session.peer_id
+    const peerId = session.peer_id || session.agent_id
     return unreadMap.value[peerId] || 0
 }
 

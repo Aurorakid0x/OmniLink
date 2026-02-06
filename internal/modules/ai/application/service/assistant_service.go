@@ -370,6 +370,13 @@ func (s *assistantServiceImpl) GetSessionMessages(ctx context.Context, sessionID
 	if err != nil {
 		return nil, fmt.Errorf("failed to count messages: %w", err)
 	}
+	if offset == 0 && totalCount > 0 {
+		start := int(totalCount) - limit
+		if start < 0 {
+			start = 0
+		}
+		offset = start
+	}
 
 	messages, err := s.messageRepo.ListMessages(ctx, sessionID, limit, offset)
 	if err != nil {

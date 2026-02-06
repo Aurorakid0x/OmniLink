@@ -319,12 +319,26 @@ export default createStore({
                                          title: 'AI助手提醒',
                                          message: payload.content,
                                          type: 'info',
-                                         duration: 5000
+                                         duration: 0, // 不自动关闭
+                                         showClose: true
                                      })
                                  }
                                  // 作为消息添加到会话
                                  // 这里的 payload 已经尽量兼容了 IM 消息格式
                                  commit('addMessage', payload)
+
+                                 // 关键修复：同时添加到 aiMessages，以便 ChatWindow (AI模式) 能即时显示
+                                 // 构造符合 AI 消息结构的 msg
+                                 const aiMsg = {
+                                     role: 'assistant',
+                                     content: payload.content,
+                                     citations: [],
+                                     created_at: payload.created_at || new Date().toISOString()
+                                 }
+                                 commit('appendAIMessage', { 
+                                     sessionId: payload.session_id, 
+                                     message: aiMsg 
+                                 })
                                  
                                  // 如果是新会话，刷新列表
                                  const myId = state.userInfo?.uuid
