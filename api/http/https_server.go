@@ -72,6 +72,7 @@ func init() {
 	var aiQueryH *aiHTTP.QueryHandler
 	var aiAssistantH *aiHTTP.AssistantHandler
 	var assistantPipeline *aiPipeline.AssistantPipeline
+	var jobExecutionPipeline *aiPipeline.JobExecutionPipeline
 	var smartCommandPipeline *aiPipeline.SmartCommandPipeline
 	var aiAsyncIngest aiService.AsyncIngestService
 	var userLifecycleSvc aiService.UserLifecycleService // 用户生命周期服务（用于新用户AI助手初始化）
@@ -79,6 +80,7 @@ func init() {
 	var aiAgentRepo aiRepository.AgentRepository
 	var aiJobRepo aiRepository.AIJobRepository
 	var aiSessionRepo aiRepository.AssistantSessionRepository
+	var aiMessageRepo aiRepository.AssistantMessageRepository
 	if initial.MilvusClient != nil {
 		embedder, embMeta, err := aiEmbedding.NewEmbedderFromConfig(context.Background(), conf)
 		if err != nil {
@@ -143,7 +145,7 @@ func init() {
 						zlog.Warn("ai chat model init failed: " + err.Error())
 					} else {
 						sessionRepo := aiPersistence.NewAssistantSessionRepository(initial.GormDB)
-						messageRepo := aiPersistence.NewAssistantMessageRepository(initial.GormDB)
+						aiMessageRepo = aiPersistence.NewAssistantMessageRepository(initial.GormDB)
 						agentRepo := aiPersistence.NewAgentRepository(initial.GormDB)
 
 						// 初始化用户生命周期服务：用于新用户注册时初始化AI助手
@@ -151,7 +153,7 @@ func init() {
 
 						assistantPipeline, err = aiPipeline.NewAssistantPipeline(
 							sessionRepo,
-							messageRepo,
+							aiMessageRepo,
 							agentRepo,
 							ragRepo,
 							userRepo,
@@ -170,15 +172,15 @@ func init() {
 							if err != nil {
 								zlog.Warn("ai smart command pipeline init failed: " + err.Error())
 							}
-							assistantSvc := aiService.NewAssistantService(sessionRepo, messageRepo, agentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
+							assistantSvc := aiService.NewAssistantService(sessionRepo, aiMessageRepo, agentRepo, ragRepo, assistantPipeline, smartCommandPipeline)
 							aiAssistantH = aiHTTP.NewAssistantHandler(assistantSvc)
 							aiAgentRepo = agentRepo
 							aiSessionRepo = sessionRepo
 							aiJobRepo = aiPersistence.NewAIJobRepository(initial.GormDB)
 
-							jobExecutionPipeline, err := aiPipeline.NewJobExecutionPipeline(
+							jobExecutionPipeline, err = aiPipeline.NewJobExecutionPipeline(
 								sessionRepo,
-								messageRepo,
+								aiMessageRepo,
 								agentRepo,
 								ragRepo,
 								userRepo,
@@ -254,6 +256,7 @@ func init() {
 					JobSvc:        aiJobSvc,
 					AgentRepo:     aiAgentRepo,
 					AISessionRepo: aiSessionRepo,
+					AIMessageRepo: aiMessageRepo,
 					WsHub:         wsHub,
 				},
 			)
@@ -290,6 +293,9 @@ func init() {
 		// 2. 注入 Pipeline
 		if assistantPipeline != nil {
 			assistantPipeline.SetTools(allTools)
+		}
+		if jobExecutionPipeline != nil {
+			jobExecutionPipeline.SetTools(allTools)
 		}
 		if smartCommandPipeline != nil {
 			var jobTools []tool.BaseTool

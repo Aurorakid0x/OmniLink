@@ -309,6 +309,37 @@ export default createStore({
                     
                     // A5: 健壮性处理
                     if (msg && typeof msg === 'object') {
+                         // A5.1 处理AI主动通知
+                         if (msg.type === 'ai_notification') {
+                             const payload = msg.payload
+                             if (payload) {
+                                 // 显示系统通知
+                                 if (typeof ElNotification !== 'undefined') {
+                                     ElNotification({
+                                         title: 'AI助手提醒',
+                                         message: payload.content,
+                                         type: 'info',
+                                         duration: 5000
+                                     })
+                                 }
+                                 // 作为消息添加到会话
+                                 // 这里的 payload 已经尽量兼容了 IM 消息格式
+                                 commit('addMessage', payload)
+                                 
+                                 // 如果是新会话，刷新列表
+                                 const myId = state.userInfo?.uuid
+                                 if (myId) {
+                                     // 使用 payload 直接判断，或者 normalize
+                                     // 这里 payload.agent_id 就是 peer_id
+                                     const peerId = payload.agent_id
+                                     if (peerId && !state.sessionList.find(s => s.peer_id === peerId)) {
+                                         dispatch('loadSessions')
+                                     }
+                                 }
+                             }
+                             return
+                         }
+
                          // 处理好友申请事件
                          if (msg.type === 'contact.apply' || msg.type === 'friend_apply') {
                              ElNotification({

@@ -22,10 +22,12 @@ type JobExecutionRequest struct {
 }
 
 type JobExecutionResult struct {
-	Answer     string
-	Citations  []respond.CitationEntry
-	TokenStats TokenStats
-	Err        error
+	Answer        string
+	Citations     []respond.CitationEntry
+	TokenStats    TokenStats
+	Status        int
+	ResultSummary string
+	Err           error
 }
 
 type JobExecutionPipeline struct {
@@ -137,13 +139,4 @@ func (p *JobExecutionPipeline) buildGraph(ctx context.Context) (compose.Runnable
 		compose.WithGraphName("JobExecutionPipeline"),
 		compose.WithNodeTriggerMode(compose.AnyPredecessor),
 		compose.WithMaxRunSteps(maxSteps))
-}
-
-func (p *JobExecutionPipeline) buildFinalResult(st *jobExecutionState) *JobExecutionResult {
-	return &JobExecutionResult{
-		Answer:     st.Answer,
-		Citations:  st.Citations,
-		TokenStats: st.Tokens,
-		Err:        st.Err,
-	}
 }

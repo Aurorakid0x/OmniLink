@@ -18,7 +18,7 @@ import (
 type AIJobService interface {
 	TriggerByEvent(ctx context.Context, eventKey string, tenantUserID string, vars map[string]string) error
 	CreateInstanceFromDef(ctx context.Context, def *job.AIJobDef) error
-	ExecuteInstance(ctx context.Context, inst *job.AIJobInst) error
+	ExecuteInstance(ctx context.Context, inst *job.AIJobInst) (string, error)
 	CreateOneTimeJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, triggerAt time.Time) error
 	CreateCronJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, cronExpr string) error
 	CreateEventJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, eventKey string) error
@@ -227,10 +227,10 @@ func (s *aiJobServiceImpl) DeactivateJobDef(ctx context.Context, userID string, 
 	return s.jobRepo.DeactivateDef(ctx, defID, userID)
 }
 
-func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobInst) error {
+func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobInst) (string, error) {
 	zlog.Info("executing ai job instance", zap.Int64("inst_id", inst.ID))
 	if inst == nil {
-		return errors.New("job instance is nil")
+		return "", errors.New("job instance is nil")
 	}
 	zlog.Info("ai job execute start",
 		zap.Int64("inst_id", inst.ID),
@@ -254,7 +254,7 @@ func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobI
 			zap.Int64("inst_id", inst.ID),
 			zap.String("tenant_user_id", inst.TenantUserID),
 			zap.String("session_id", inst.SessionID))
-		return err
+		return "", err
 	}
 	if result != nil && result.Err != nil {
 		zlog.Warn("ai job execute result error",
@@ -262,14 +262,21 @@ func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobI
 			zap.Int64("inst_id", inst.ID),
 			zap.String("tenant_user_id", inst.TenantUserID),
 			zap.String("session_id", inst.SessionID))
-		return result.Err
+		return "", result.Err
 	}
+
+	summary := "Success"
+	if result != nil && result.ResultSummary != "" {
+		summary = result.ResultSummary
+	}
+
 	zlog.Info("ai job execute done",
 		zap.Int64("inst_id", inst.ID),
 		zap.String("tenant_user_id", inst.TenantUserID),
 		zap.String("session_id", inst.SessionID),
-		zap.Int("answer_len", len(result.Answer)))
-	return nil
+		zap.Int("answer_len", len(result.Answer)),
+		zap.String("summary", summary))
+	return summary, nil
 }
 
 func (s *aiJobServiceImpl) validateSession(ctx context.Context, userID string, agentID string, sessionID string) error {

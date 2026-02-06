@@ -34,6 +34,7 @@ type BuiltinServerDependencies struct {
 	JobSvc        aiService.AIJobService
 	AgentRepo     aiRepository.AgentRepository
 	AISessionRepo aiRepository.AssistantSessionRepository
+	AIMessageRepo aiRepository.AssistantMessageRepository
 	WsHub         *ws.Hub
 }
 
@@ -65,8 +66,8 @@ func NewBuiltinMCPServer(conf BuiltinServerConfig, deps BuiltinServerDependencie
 		jobHandler.RegisterTools(s)
 	}
 
-	if deps.WsHub != nil {
-		notificationHandler := mcpHandlers.NewNotificationToolHandler(deps.WsHub)
+	if deps.WsHub != nil && deps.AIMessageRepo != nil && deps.AISessionRepo != nil {
+		notificationHandler := mcpHandlers.NewNotificationToolHandler(deps.WsHub, deps.AIMessageRepo, deps.AISessionRepo)
 		notificationHandler.RegisterTools(s)
 	}
 

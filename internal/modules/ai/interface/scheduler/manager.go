@@ -122,7 +122,7 @@ func (m *SchedulerManager) pollAndExecute() {
 			if err := m.jobRepo.UpdateInstStatus(ctx, i.ID, job.JobStatusRunning, ""); err != nil {
 				return
 			}
-			err := m.jobService.ExecuteInstance(ctx, i)
+			summary, err := m.jobService.ExecuteInstance(ctx, i)
 			if err != nil {
 				if i.RetryCount >= 3 {
 					_ = m.jobRepo.UpdateInstStatus(ctx, i.ID, job.JobStatusFailed, err.Error())
@@ -133,7 +133,10 @@ func (m *SchedulerManager) pollAndExecute() {
 					_ = m.jobRepo.UpdateInstForRetry(ctx, i.ID, nextAt, "Retry pending")
 				}
 			} else {
-				_ = m.jobRepo.UpdateInstStatus(ctx, i.ID, job.JobStatusCompleted, "Success")
+				if summary == "" {
+					summary = "Success"
+				}
+				_ = m.jobRepo.UpdateInstStatus(ctx, i.ID, job.JobStatusCompleted, summary)
 			}
 		}(inst)
 	}

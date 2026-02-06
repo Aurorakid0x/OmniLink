@@ -2,13 +2,10 @@ package pipeline
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"OmniLink/internal/modules/ai/application/dto/respond"
-	"OmniLink/internal/modules/ai/domain/assistant"
 	"OmniLink/pkg/zlog"
 
 	"github.com/cloudwego/eino/components/model"
@@ -29,6 +26,7 @@ type jobExecutionState struct {
 	IterationCount int
 	MaxIterations  int
 	LastResponse   *schema.Message
+	ToolCalls      []string // 记录调用过的工具名称
 }
 
 func convertToPointers(msgs []schema.Message) []*schema.Message {
@@ -114,7 +112,7 @@ func (p *JobExecutionPipeline) buildPromptNode(ctx context.Context, st *jobExecu
 		return st, nil
 	}
 
-	systemPrompt := "你是 OmniLink 的AI助手，正在执行用户设置的定时任务。请根据任务指令完成相应操作，必要时调用工具。"
+	systemPrompt := "你是 OmniLink 的AI助手，正在后台执行用户设置的定时任务。请根据任务指令完成相应操作。\n\n**重要规则**：\n1. 如果需要向用户发送通知或结果，**必须**调用 `push_notification` 工具。\n2. 直接输出的文本内容**不会**被发送给用户，只能作为日志记录。\n3. 请务必调用工具来触达用户。"
 
 	if len(st.RetrievedCtx) > 0 {
 		var ctxParts []string
@@ -201,6 +199,9 @@ func (p *JobExecutionPipeline) toolsNode(ctx context.Context, st *jobExecutionSt
 
 	var toolMsgs []schema.Message
 	for _, tc := range st.LastResponse.ToolCalls {
+		toolName := strings.TrimSpace(tc.Function.Name)
+		st.ToolCalls = append(st.ToolCalls, toolName) // 记录工具调用
+
 		toolResp := p.invokeTool(ctx, tc)
 		toolMsgs = append(toolMsgs, *toolResp)
 	}
@@ -270,32 +271,8 @@ func (p *JobExecutionPipeline) persistNode(ctx context.Context, st *jobExecution
 		}
 	}
 
-	now := time.Now()
-
-	assistantMsg := &assistant.AIAssistantMessage{
-		SessionId:     st.SessionID,
-		Role:          "assistant",
-		Content:       st.Answer,
-		CitationsJson: "{}",
-		TokensJson:    "{}",
-		CreatedAt:     now,
-	}
-
-	if len(st.Citations) > 0 {
-		if b, err := json.Marshal(st.Citations); err == nil {
-			assistantMsg.CitationsJson = string(b)
-		}
-	}
-
-	if st.Tokens.TotalTokens > 0 {
-		if b, err := json.Marshal(st.Tokens); err == nil {
-			assistantMsg.TokensJson = string(b)
-		}
-	}
-
-	if err := p.messageRepo.SaveMessage(ctx, assistantMsg); err != nil {
-		zlog.Error("failed to save job execution message", zap.Error(err))
-	}
+	// 任务执行流水线不直接保存Assistant消息，而是依赖push_notification工具
+	// 这样避免了"系统提示"和"AI回复"的双重消息，也确保了所有通知都通过统一的推送机制
 
 	if err := p.sessionRepo.UpdateSessionUpdatedAt(ctx, st.SessionID); err != nil {
 		zlog.Error("failed to update session timestamp", zap.Error(err))
@@ -307,4 +284,37 @@ func (p *JobExecutionPipeline) persistNode(ctx context.Context, st *jobExecution
 		zap.Int("answer_len", len(st.Answer)))
 
 	return p.buildFinalResult(st), nil
+}
+
+func (p *JobExecutionPipeline) buildFinalResult(st *jobExecutionState) *JobExecutionResult {
+	// Status: 2 (Completed), 3 (Failed)
+	status := 2
+	summary := "Executed without notification"
+
+	if st.Err != nil {
+		status = 3
+		summary = fmt.Sprintf("Error: %v", st.Err)
+	} else {
+		hasPush := false
+		for _, toolName := range st.ToolCalls {
+			if toolName == "push_notification" {
+				hasPush = true
+				break
+			}
+		}
+		if hasPush {
+			summary = "Notification pushed successfully"
+		} else if len(st.ToolCalls) > 0 {
+			summary = fmt.Sprintf("Tools executed: %s", strings.Join(st.ToolCalls, ", "))
+		}
+	}
+
+	return &JobExecutionResult{
+		Answer:        st.Answer,
+		Citations:     st.Citations,
+		TokenStats:    st.Tokens,
+		Status:        status,
+		ResultSummary: summary,
+		Err:           st.Err,
+	}
 }
