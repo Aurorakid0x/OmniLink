@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"OmniLink/internal/modules/ai/application/dto/request"
 	"OmniLink/internal/modules/ai/domain/assistant"
 	"OmniLink/internal/modules/ai/domain/job"
 	"OmniLink/internal/modules/ai/domain/repository"
+	"OmniLink/internal/modules/ai/infrastructure/pipeline"
 	"OmniLink/pkg/zlog"
 
 	"go.uber.org/zap"
@@ -26,16 +26,16 @@ type AIJobService interface {
 }
 
 type aiJobServiceImpl struct {
-	jobRepo      repository.AIJobRepository
-	sessionRepo  repository.AssistantSessionRepository
-	assistantSvc AssistantService
+	jobRepo     repository.AIJobRepository
+	sessionRepo repository.AssistantSessionRepository
+	jobExecPipe *pipeline.JobExecutionPipeline
 }
 
-func NewAIJobService(repo repository.AIJobRepository, sessionRepo repository.AssistantSessionRepository, as AssistantService) AIJobService {
+func NewAIJobService(repo repository.AIJobRepository, sessionRepo repository.AssistantSessionRepository, jobExecPipe *pipeline.JobExecutionPipeline) AIJobService {
 	return &aiJobServiceImpl{
-		jobRepo:      repo,
-		sessionRepo:  sessionRepo,
-		assistantSvc: as,
+		jobRepo:     repo,
+		sessionRepo: sessionRepo,
+		jobExecPipe: jobExecPipe,
 	}
 }
 
@@ -239,25 +239,37 @@ func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobI
 		zap.String("agent_id", inst.AgentID),
 		zap.String("session_id", inst.SessionID),
 		zap.Int("prompt_len", len(inst.Prompt)))
-	req := request.AssistantChatRequest{
-		Question:  inst.Prompt,
-		AgentID:   inst.AgentID,
-		SessionID: inst.SessionID,
+
+	req := &pipeline.JobExecutionRequest{
+		TenantUserID: inst.TenantUserID,
+		AgentID:      inst.AgentID,
+		SessionID:    inst.SessionID,
+		Prompt:       inst.Prompt,
+		TopK:         5,
 	}
-	_, err := s.assistantSvc.ChatInternal(ctx, req, inst.TenantUserID)
+	result, err := s.jobExecPipe.Execute(ctx, req)
 	if err != nil {
 		zlog.Warn("ai job execute failed",
 			zap.Error(err),
 			zap.Int64("inst_id", inst.ID),
 			zap.String("tenant_user_id", inst.TenantUserID),
 			zap.String("session_id", inst.SessionID))
-	} else {
-		zlog.Info("ai job execute done",
+		return err
+	}
+	if result != nil && result.Err != nil {
+		zlog.Warn("ai job execute result error",
+			zap.Error(result.Err),
 			zap.Int64("inst_id", inst.ID),
 			zap.String("tenant_user_id", inst.TenantUserID),
 			zap.String("session_id", inst.SessionID))
+		return result.Err
 	}
-	return err
+	zlog.Info("ai job execute done",
+		zap.Int64("inst_id", inst.ID),
+		zap.String("tenant_user_id", inst.TenantUserID),
+		zap.String("session_id", inst.SessionID),
+		zap.Int("answer_len", len(result.Answer)))
+	return nil
 }
 
 func (s *aiJobServiceImpl) validateSession(ctx context.Context, userID string, agentID string, sessionID string) error {

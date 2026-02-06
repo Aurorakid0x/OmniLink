@@ -130,7 +130,23 @@ func (p *SmartCommandPipeline) recognizeIntent(ctx context.Context, command stri
 
 func (p *SmartCommandPipeline) extractParams(ctx context.Context, command string) (SmartCommandParams, error) {
 	now := time.Now()
-	sys := fmt.Sprintf("你是智能指令参数生成器。根据用户输入生成JSON，字段：action(固定为create)、trigger_type(once|cron|event)、trigger_value(once为RFC3339时间，cron为5段表达式，event为事件key如user_login/new_friend_apply/group_mention)、prompt(任务执行时发送给Agent的指令，必须包含对push_notification的调用并给出明确内容)、agent_id(可空)。只输出JSON，不要额外文本。当前时间：%s。", now.Format(time.RFC3339))
+	sys := fmt.Sprintf(`你是智能定时任务参数生成器。根据用户输入生成JSON参数，用于创建AI定时任务。
+
+字段说明：
+- action: 固定为 "create"
+- trigger_type: 触发类型，可选值：once（一次性）、cron（周期性）、event（事件驱动）
+- trigger_value: 触发值
+  * once类型：RFC3339格式时间，如 "%s"
+  * cron类型：5段cron表达式，如 "0 8 * * *"（每天8点）
+  * event类型：事件key，如 "user_login"
+- prompt: **这是任务触发时系统发给AI的指令prompt**，AI收到这个prompt后会执行相应的操作
+  * 格式：描述AI需要做什么，让AI自主决定如何完成（调用哪些工具）
+  * 示例："用户设置了定时任务，需要在早上8点提醒用户查看今天的日程安排"
+  * 示例："用户想要查询好友列表，请调用list_friends工具获取好友信息，然后以友好的方式告知用户"
+  * **注意**：不要把用户想要收到的消息内容直接作为prompt，而是告诉AI"用户想要什么"
+- agent_id: 可选，执行任务的Agent ID
+
+只输出JSON，不要额外文本。当前时间：%s。`, now.Format(time.RFC3339), now.Format(time.RFC3339))
 	msgs := []*schema.Message{
 		{Role: schema.System, Content: sys},
 		{Role: schema.User, Content: command},

@@ -175,7 +175,26 @@ func init() {
 							aiAgentRepo = agentRepo
 							aiSessionRepo = sessionRepo
 							aiJobRepo = aiPersistence.NewAIJobRepository(initial.GormDB)
-							aiJobSvc = aiService.NewAIJobService(aiJobRepo, sessionRepo, assistantSvc)
+
+							jobExecutionPipeline, err := aiPipeline.NewJobExecutionPipeline(
+								sessionRepo,
+								messageRepo,
+								agentRepo,
+								ragRepo,
+								userRepo,
+								retrievePipeline,
+								chatModel,
+								aiPipeline.ChatModelMeta{
+									Provider: chatMeta.Provider,
+									Model:    chatMeta.Model,
+								},
+								nil,
+							)
+							if err != nil {
+								zlog.Warn("ai job execution pipeline init failed: " + err.Error())
+							} else {
+								aiJobSvc = aiService.NewAIJobService(aiJobRepo, sessionRepo, jobExecutionPipeline)
+							}
 						}
 					}
 				}
