@@ -114,7 +114,7 @@ const handleSelectSession = (session) => {
     // AI会话
     store.commit('setCurrentSession', { 
       sessionId: session.session_id, 
-      peerId: null, // AI会话无peerId
+      peerId: session.agent_id, // 修复：AI会话使用 agent_id 作为 peerId
       isAISession: true
     })
     loadAIMessages(session.session_id)
