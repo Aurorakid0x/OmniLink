@@ -15,6 +15,9 @@ import (
 	"OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/internal/modules/ai/infrastructure/pipeline"
 	"OmniLink/pkg/util"
+	"OmniLink/pkg/zlog"
+
+	"go.uber.org/zap"
 )
 
 // AssistantService 全局AI助手服务接口
@@ -95,6 +98,14 @@ func (s *assistantServiceImpl) Chat(ctx context.Context, req request.AssistantCh
 		return nil, fmt.Errorf("question is required")
 	}
 
+	zlog.Info("assistant chat start",
+		zap.String("tenant_user_id", tenantUserID),
+		zap.String("session_id", strings.TrimSpace(req.SessionID)),
+		zap.String("agent_id", strings.TrimSpace(req.AgentID)),
+		zap.String("scope", strings.TrimSpace(req.Scope)),
+		zap.Int("top_k", req.TopK),
+		zap.Int("question_len", len(strings.TrimSpace(req.Question))))
+
 	pipeReq := &pipeline.AssistantRequest{
 		SessionID:    strings.TrimSpace(req.SessionID),
 		TenantUserID: tenantUserID,
@@ -107,11 +118,26 @@ func (s *assistantServiceImpl) Chat(ctx context.Context, req request.AssistantCh
 
 	result, err := s.pipeline.Execute(ctx, pipeReq)
 	if err != nil {
+		zlog.Warn("assistant chat failed",
+			zap.Error(err),
+			zap.String("tenant_user_id", tenantUserID),
+			zap.String("session_id", strings.TrimSpace(req.SessionID)))
 		return nil, err
 	}
 	if result.Err != nil {
+		zlog.Warn("assistant chat result error",
+			zap.Error(result.Err),
+			zap.String("tenant_user_id", tenantUserID),
+			zap.String("session_id", strings.TrimSpace(req.SessionID)),
+			zap.String("query_id", result.QueryID))
 		return nil, result.Err
 	}
+
+	zlog.Info("assistant chat done",
+		zap.String("tenant_user_id", tenantUserID),
+		zap.String("session_id", result.SessionID),
+		zap.String("query_id", result.QueryID),
+		zap.Int("answer_len", len(result.Answer)))
 
 	return &respond.AssistantChatRespond{
 		SessionID: result.SessionID,
@@ -130,6 +156,14 @@ func (s *assistantServiceImpl) ChatStream(ctx context.Context, req request.Assis
 	if strings.TrimSpace(req.Question) == "" {
 		return nil, fmt.Errorf("question is required")
 	}
+
+	zlog.Info("assistant chat stream start",
+		zap.String("tenant_user_id", tenantUserID),
+		zap.String("session_id", strings.TrimSpace(req.SessionID)),
+		zap.String("agent_id", strings.TrimSpace(req.AgentID)),
+		zap.String("scope", strings.TrimSpace(req.Scope)),
+		zap.Int("top_k", req.TopK),
+		zap.Int("question_len", len(strings.TrimSpace(req.Question))))
 
 	eventChan := make(chan StreamEvent, 100)
 
@@ -157,6 +191,10 @@ func (s *assistantServiceImpl) ChatStream(ctx context.Context, req request.Assis
 
 		streamReader, st, err := s.pipeline.ExecuteStream(ctx, pipeReq, emitter)
 		if err != nil {
+			zlog.Warn("assistant chat stream failed",
+				zap.Error(err),
+				zap.String("tenant_user_id", tenantUserID),
+				zap.String("session_id", strings.TrimSpace(req.SessionID)))
 			eventChan <- StreamEvent{Event: "error", Data: map[string]string{"error": err.Error()}}
 			return
 		}
@@ -178,9 +216,20 @@ func (s *assistantServiceImpl) ChatStream(ctx context.Context, req request.Assis
 		// 持久化结果
 		result, err := s.pipeline.PersistStreamResult(ctx, st, fullAnswer, llmMs)
 		if err != nil {
+			zlog.Warn("assistant chat stream persist failed",
+				zap.Error(err),
+				zap.String("tenant_user_id", tenantUserID),
+				zap.String("session_id", strings.TrimSpace(req.SessionID)),
+				zap.String("query_id", st.QueryID))
 			eventChan <- StreamEvent{Event: "error", Data: map[string]string{"error": err.Error()}}
 			return
 		}
+
+		zlog.Info("assistant chat stream done",
+			zap.String("tenant_user_id", tenantUserID),
+			zap.String("session_id", result.SessionID),
+			zap.String("query_id", result.QueryID),
+			zap.Int("answer_len", len(result.Answer)))
 
 		// 发送done事件
 		doneEvent := respond.AssistantStreamDoneEvent{

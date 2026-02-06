@@ -56,6 +56,16 @@ func (p *AssistantPipeline) loadMemoryNode(ctx context.Context, req *AssistantRe
 		IterationCount: 0,
 	}
 
+	zlog.Info("assistant request received",
+		zap.String("query_id", st.QueryID),
+		zap.String("tenant_user_id", strings.TrimSpace(req.TenantUserID)),
+		zap.String("session_id", strings.TrimSpace(req.SessionID)),
+		zap.String("agent_id", strings.TrimSpace(req.AgentID)),
+		zap.String("scope", strings.TrimSpace(req.Scope)),
+		zap.Int("top_k", req.TopK),
+		zap.Int("question_len", len(strings.TrimSpace(req.Question))),
+		zap.String("question", truncateLogString(strings.TrimSpace(req.Question), 200)))
+
 	// 1. 校验必填参数
 	if strings.TrimSpace(req.TenantUserID) == "" {
 		st.Err = fmt.Errorf("tenant_user_id is required")
@@ -389,6 +399,12 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 		var found bool
 		var runErr error
 
+		zlog.Info("assistant tool call start",
+			zap.String("query_id", st.QueryID),
+			zap.String("tool_name", toolName),
+			zap.String("tool_args", truncateLogString(strings.TrimSpace(toolArgs), 500)),
+			zap.Int("tool_args_len", len(toolArgs)))
+
 		if st.StreamEmitter != nil {
 			st.StreamEmitter("tool_call", map[string]string{"tool_name": toolName})
 		}
@@ -439,7 +455,10 @@ func (p *AssistantPipeline) toolsNode(ctx context.Context, st *assistantState, _
 		zlog.Info("assistant tool executed",
 			zap.String("query_id", st.QueryID),
 			zap.String("tool_name", toolName),
-			zap.Int("response_len", len(toolResp)))
+			zap.Int("response_len", len(toolResp)),
+			zap.String("tool_result", truncateLogString(strings.TrimSpace(toolResp), 500)),
+			zap.Bool("found", found),
+			zap.Bool("error", runErr != nil))
 	}
 
 	zlog.Info("assistant tools node done",
@@ -544,6 +563,16 @@ func (p *AssistantPipeline) ensureKnowledgeBase(ctx context.Context, tenantUserI
 		UpdatedAt: now,
 	}
 	return p.ragRepo.EnsureKnowledgeBase(ctx, kb)
+}
+
+func truncateLogString(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 func buildContextString(citations []respond.CitationEntry) string {

@@ -9,10 +9,12 @@ import (
 
 	"OmniLink/internal/modules/ai/application/service"
 	"OmniLink/internal/modules/ai/domain/repository"
+	"OmniLink/pkg/zlog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/robfig/cron/v3"
+	"go.uber.org/zap"
 )
 
 type JobManagementHandler struct {
@@ -59,6 +61,7 @@ func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args, ok := request.Params.Arguments.(map[string]interface{})
 	if !ok {
+		zlog.Warn("manage_ai_job invalid arguments")
 		return mcp.NewToolResultError("invalid arguments format"), nil
 	}
 	action, _ := args["action"].(string)
@@ -91,8 +94,19 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 	}
 
 	if userID == "" {
+		zlog.Warn("manage_ai_job missing user context",
+			zap.String("action", action),
+			zap.String("trigger_type", triggerType))
 		return mcp.NewToolResultError("unauthorized: missing user context"), nil
 	}
+
+	zlog.Info("manage_ai_job request",
+		zap.String("user_id", userID),
+		zap.String("action", action),
+		zap.String("trigger_type", triggerType),
+		zap.String("trigger_value", triggerValue),
+		zap.String("agent_id", targetAgentID),
+		zap.Int("prompt_len", len(prompt)))
 
 	if action == "create" {
 		if prompt == "" {
@@ -107,25 +121,32 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 		// 校验 agent 归属，防止越权调用
 		ag, err := h.agentRepo.GetAgentByID(ctx, targetAgentID, userID)
 		if err != nil {
+			zlog.Warn("manage_ai_job agent lookup failed", zap.Error(err), zap.String("user_id", userID), zap.String("agent_id", targetAgentID))
 			return mcp.NewToolResultError("agent lookup failed: " + err.Error()), nil
 		}
 		if ag == nil {
+			zlog.Warn("manage_ai_job agent not found", zap.String("user_id", userID), zap.String("agent_id", targetAgentID))
 			return mcp.NewToolResultError("agent_id not found or unauthorized"), nil
 		}
 		if h.sessionRepo == nil {
+			zlog.Warn("manage_ai_job session repo is nil", zap.String("user_id", userID))
 			return mcp.NewToolResultError("session repo is nil"), nil
 		}
 		session, err := h.sessionRepo.GetSystemGlobalSession(ctx, userID)
 		if err != nil {
+			zlog.Warn("manage_ai_job get system session failed", zap.Error(err), zap.String("user_id", userID))
 			return mcp.NewToolResultError("failed to get system session: " + err.Error()), nil
 		}
 		if session == nil {
+			zlog.Warn("manage_ai_job system session not found", zap.String("user_id", userID))
 			return mcp.NewToolResultError("system session not found"), nil
 		}
 		if strings.TrimSpace(session.AgentId) == "" {
+			zlog.Warn("manage_ai_job system session missing agent_id", zap.String("user_id", userID), zap.String("session_id", session.SessionId))
 			return mcp.NewToolResultError("system session missing agent_id"), nil
 		}
 		if targetAgentID != "" && strings.TrimSpace(session.AgentId) != targetAgentID {
+			zlog.Warn("manage_ai_job agent mismatch", zap.String("user_id", userID), zap.String("session_agent_id", session.AgentId), zap.String("agent_id", targetAgentID))
 			return mcp.NewToolResultError("agent_id does not match system session agent_id"), nil
 		}
 		if targetAgentID == "" {
@@ -133,8 +154,16 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 		}
 		sessionID := strings.TrimSpace(session.SessionId)
 		if sessionID == "" {
+			zlog.Warn("manage_ai_job system session id empty", zap.String("user_id", userID))
 			return mcp.NewToolResultError("system session_id is empty"), nil
 		}
+
+		zlog.Info("manage_ai_job create resolved",
+			zap.String("user_id", userID),
+			zap.String("agent_id", targetAgentID),
+			zap.String("session_id", sessionID),
+			zap.String("trigger_type", triggerType),
+			zap.String("trigger_value", triggerValue))
 		switch triggerType {
 		case "once":
 			t, err := time.Parse(time.RFC3339, triggerValue)
@@ -146,27 +175,47 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 				}
 			}
 			if err := h.jobSvc.CreateOneTimeJob(ctx, userID, targetAgentID, sessionID, prompt, t); err != nil {
+				zlog.Warn("manage_ai_job create once failed", zap.Error(err), zap.String("user_id", userID), zap.String("agent_id", targetAgentID), zap.String("session_id", sessionID))
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
 			}
+			zlog.Info("manage_ai_job create once success",
+				zap.String("user_id", userID),
+				zap.String("agent_id", targetAgentID),
+				zap.String("session_id", sessionID),
+				zap.String("trigger_at", t.Format(time.RFC3339)))
 			return mcp.NewToolResultText(fmt.Sprintf("Created One-time Job at %s", t.Format(time.RFC3339))), nil
 
 		case "cron":
 			// 使用标准5段cron表达式校验
 			if _, err := cron.ParseStandard(triggerValue); err != nil {
+				zlog.Warn("manage_ai_job invalid cron", zap.Error(err), zap.String("user_id", userID), zap.String("cron", triggerValue))
 				return mcp.NewToolResultError("invalid cron expression (5 fields required)"), nil
 			}
 			if err := h.jobSvc.CreateCronJob(ctx, userID, targetAgentID, sessionID, prompt, triggerValue); err != nil {
+				zlog.Warn("manage_ai_job create cron failed", zap.Error(err), zap.String("user_id", userID), zap.String("agent_id", targetAgentID), zap.String("session_id", sessionID), zap.String("cron", triggerValue))
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
 			}
+			zlog.Info("manage_ai_job create cron success",
+				zap.String("user_id", userID),
+				zap.String("agent_id", targetAgentID),
+				zap.String("session_id", sessionID),
+				zap.String("cron", triggerValue))
 			return mcp.NewToolResultText(fmt.Sprintf("Created Cron Job: %s", triggerValue)), nil
 
 		case "event":
 			if triggerValue == "" {
+				zlog.Warn("manage_ai_job missing event key", zap.String("user_id", userID))
 				return mcp.NewToolResultError("event key is required"), nil
 			}
 			if err := h.jobSvc.CreateEventJob(ctx, userID, targetAgentID, sessionID, prompt, triggerValue); err != nil {
+				zlog.Warn("manage_ai_job create event failed", zap.Error(err), zap.String("user_id", userID), zap.String("agent_id", targetAgentID), zap.String("session_id", sessionID), zap.String("event_key", triggerValue))
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
 			}
+			zlog.Info("manage_ai_job create event success",
+				zap.String("user_id", userID),
+				zap.String("agent_id", targetAgentID),
+				zap.String("session_id", sessionID),
+				zap.String("event_key", triggerValue))
 			return mcp.NewToolResultText(fmt.Sprintf("Created Event Job: %s", triggerValue)), nil
 
 		default:
@@ -180,8 +229,10 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 		}
 		// 软删除任务定义：保留历史实例
 		if err := h.jobSvc.DeactivateJobDef(ctx, userID, defID); err != nil {
+			zlog.Warn("manage_ai_job delete failed", zap.Error(err), zap.String("user_id", userID), zap.Int64("job_def_id", defID))
 			return mcp.NewToolResultError("failed: " + err.Error()), nil
 		}
+		zlog.Info("manage_ai_job delete success", zap.String("user_id", userID), zap.Int64("job_def_id", defID))
 		return mcp.NewToolResultText(fmt.Sprintf("Deactivated Job Def: %d", defID)), nil
 	}
 

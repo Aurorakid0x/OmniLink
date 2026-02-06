@@ -42,6 +42,7 @@ func NewAIJobService(repo repository.AIJobRepository, sessionRepo repository.Ass
 func (s *aiJobServiceImpl) TriggerByEvent(ctx context.Context, eventKey string, tenantUserID string, vars map[string]string) error {
 	defs, err := s.jobRepo.GetDefsByEventAndUser(ctx, eventKey, tenantUserID)
 	if err != nil {
+		zlog.Warn("ai job trigger by event failed", zap.Error(err), zap.String("event_key", eventKey), zap.String("tenant_user_id", tenantUserID))
 		return err
 	}
 	globalDefs, err := s.jobRepo.GetDefsByEvent(ctx, eventKey)
@@ -49,8 +50,13 @@ func (s *aiJobServiceImpl) TriggerByEvent(ctx context.Context, eventKey string, 
 		defs = append(defs, globalDefs...)
 	}
 	if len(defs) == 0 {
+		zlog.Info("ai job trigger by event no defs", zap.String("event_key", eventKey), zap.String("tenant_user_id", tenantUserID))
 		return nil
 	}
+	zlog.Info("ai job trigger by event",
+		zap.String("event_key", eventKey),
+		zap.String("tenant_user_id", tenantUserID),
+		zap.Int("defs", len(defs)))
 	for _, def := range defs {
 		finalPrompt := def.Prompt
 		for k, v := range vars {
@@ -64,6 +70,12 @@ func (s *aiJobServiceImpl) TriggerByEvent(ctx context.Context, eventKey string, 
 			return errors.New("session_id is required for job execution")
 		}
 		if err := s.validateSession(ctx, targetUser, def.AgentID, def.SessionID); err != nil {
+			zlog.Warn("ai job trigger by event session invalid",
+				zap.Error(err),
+				zap.String("event_key", eventKey),
+				zap.String("tenant_user_id", targetUser),
+				zap.String("agent_id", def.AgentID),
+				zap.String("session_id", def.SessionID))
 			return err
 		}
 		inst := &job.AIJobInst{
@@ -75,6 +87,12 @@ func (s *aiJobServiceImpl) TriggerByEvent(ctx context.Context, eventKey string, 
 			Status:       job.JobStatusPending,
 			TriggerAt:    time.Now(),
 		}
+		zlog.Info("ai job instance created from event",
+			zap.Int64("job_def_id", def.ID),
+			zap.String("tenant_user_id", targetUser),
+			zap.String("agent_id", def.AgentID),
+			zap.String("session_id", def.SessionID),
+			zap.Int("prompt_len", len(finalPrompt)))
 		_ = s.jobRepo.CreateInst(ctx, inst)
 	}
 	return nil
@@ -88,6 +106,12 @@ func (s *aiJobServiceImpl) CreateInstanceFromDef(ctx context.Context, def *job.A
 		return errors.New("session_id is required for job execution")
 	}
 	if err := s.validateSession(ctx, def.TenantUserID, def.AgentID, def.SessionID); err != nil {
+		zlog.Warn("ai job create instance validate failed",
+			zap.Error(err),
+			zap.Int64("job_def_id", def.ID),
+			zap.String("tenant_user_id", def.TenantUserID),
+			zap.String("agent_id", def.AgentID),
+			zap.String("session_id", def.SessionID))
 		return err
 	}
 	inst := &job.AIJobInst{
@@ -99,11 +123,22 @@ func (s *aiJobServiceImpl) CreateInstanceFromDef(ctx context.Context, def *job.A
 		Status:       job.JobStatusPending,
 		TriggerAt:    time.Now(),
 	}
+	zlog.Info("ai job instance created from def",
+		zap.Int64("job_def_id", def.ID),
+		zap.String("tenant_user_id", def.TenantUserID),
+		zap.String("agent_id", def.AgentID),
+		zap.String("session_id", def.SessionID),
+		zap.Int("prompt_len", len(def.Prompt)))
 	return s.jobRepo.CreateInst(ctx, inst)
 }
 
 func (s *aiJobServiceImpl) CreateOneTimeJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, triggerAt time.Time) error {
 	if err := s.validateSession(ctx, userID, agentID, sessionID); err != nil {
+		zlog.Warn("ai job create one time validate failed",
+			zap.Error(err),
+			zap.String("tenant_user_id", userID),
+			zap.String("agent_id", agentID),
+			zap.String("session_id", sessionID))
 		return err
 	}
 	inst := &job.AIJobInst{
@@ -115,11 +150,22 @@ func (s *aiJobServiceImpl) CreateOneTimeJob(ctx context.Context, userID string, 
 		Status:       job.JobStatusPending,
 		TriggerAt:    triggerAt,
 	}
+	zlog.Info("ai job create one time",
+		zap.String("tenant_user_id", userID),
+		zap.String("agent_id", agentID),
+		zap.String("session_id", sessionID),
+		zap.String("trigger_at", triggerAt.Format(time.RFC3339)),
+		zap.Int("prompt_len", len(prompt)))
 	return s.jobRepo.CreateInst(ctx, inst)
 }
 
 func (s *aiJobServiceImpl) CreateCronJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, cronExpr string) error {
 	if err := s.validateSession(ctx, userID, agentID, sessionID); err != nil {
+		zlog.Warn("ai job create cron validate failed",
+			zap.Error(err),
+			zap.String("tenant_user_id", userID),
+			zap.String("agent_id", agentID),
+			zap.String("session_id", sessionID))
 		return err
 	}
 	def := &job.AIJobDef{
@@ -134,11 +180,22 @@ func (s *aiJobServiceImpl) CreateCronJob(ctx context.Context, userID string, age
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
+	zlog.Info("ai job create cron",
+		zap.String("tenant_user_id", userID),
+		zap.String("agent_id", agentID),
+		zap.String("session_id", sessionID),
+		zap.String("cron", cronExpr),
+		zap.Int("prompt_len", len(prompt)))
 	return s.jobRepo.CreateDef(ctx, def)
 }
 
 func (s *aiJobServiceImpl) CreateEventJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, eventKey string) error {
 	if err := s.validateSession(ctx, userID, agentID, sessionID); err != nil {
+		zlog.Warn("ai job create event validate failed",
+			zap.Error(err),
+			zap.String("tenant_user_id", userID),
+			zap.String("agent_id", agentID),
+			zap.String("session_id", sessionID))
 		return err
 	}
 	def := &job.AIJobDef{
@@ -153,6 +210,12 @@ func (s *aiJobServiceImpl) CreateEventJob(ctx context.Context, userID string, ag
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
+	zlog.Info("ai job create event",
+		zap.String("tenant_user_id", userID),
+		zap.String("agent_id", agentID),
+		zap.String("session_id", sessionID),
+		zap.String("event_key", eventKey),
+		zap.Int("prompt_len", len(prompt)))
 	return s.jobRepo.CreateDef(ctx, def)
 }
 
@@ -166,12 +229,34 @@ func (s *aiJobServiceImpl) DeactivateJobDef(ctx context.Context, userID string, 
 
 func (s *aiJobServiceImpl) ExecuteInstance(ctx context.Context, inst *job.AIJobInst) error {
 	zlog.Info("executing ai job instance", zap.Int64("inst_id", inst.ID))
+	if inst == nil {
+		return errors.New("job instance is nil")
+	}
+	zlog.Info("ai job execute start",
+		zap.Int64("inst_id", inst.ID),
+		zap.Int64("job_def_id", inst.JobDefID),
+		zap.String("tenant_user_id", inst.TenantUserID),
+		zap.String("agent_id", inst.AgentID),
+		zap.String("session_id", inst.SessionID),
+		zap.Int("prompt_len", len(inst.Prompt)))
 	req := request.AssistantChatRequest{
 		Question:  inst.Prompt,
 		AgentID:   inst.AgentID,
 		SessionID: inst.SessionID,
 	}
 	_, err := s.assistantSvc.ChatInternal(ctx, req, inst.TenantUserID)
+	if err != nil {
+		zlog.Warn("ai job execute failed",
+			zap.Error(err),
+			zap.Int64("inst_id", inst.ID),
+			zap.String("tenant_user_id", inst.TenantUserID),
+			zap.String("session_id", inst.SessionID))
+	} else {
+		zlog.Info("ai job execute done",
+			zap.Int64("inst_id", inst.ID),
+			zap.String("tenant_user_id", inst.TenantUserID),
+			zap.String("session_id", inst.SessionID))
+	}
 	return err
 }
 
