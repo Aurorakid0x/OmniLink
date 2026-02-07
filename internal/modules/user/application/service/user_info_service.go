@@ -28,14 +28,16 @@ type UserInfoService interface {
 
 type userInfoServiceImpl struct {
 	repo         repository.UserInfoRepository
-	lifecycleSvc aiService.UserLifecycleService // AI模块：用户生命周期服务
+	lifecycleSvc aiService.UserLifecycleService
+	jobSvc       aiService.AIJobService
 }
 
 // NewUserInfoService 构造函数
-func NewUserInfoService(repo repository.UserInfoRepository, lifecycleSvc aiService.UserLifecycleService) UserInfoService {
+func NewUserInfoService(repo repository.UserInfoRepository, lifecycleSvc aiService.UserLifecycleService, jobSvc aiService.AIJobService) UserInfoService {
 	return &userInfoServiceImpl{
 		repo:         repo,
 		lifecycleSvc: lifecycleSvc,
+		jobSvc:       jobSvc,
 	}
 }
 
@@ -128,6 +130,19 @@ func (u *userInfoServiceImpl) Login(loginReq request.LoginRequest) (*respond.Log
 		}
 	}
 	// =====================================================
+	if u.jobSvc != nil {
+		vars := map[string]string{
+			"login_time": time.Now().Format("2006-01-02 15:04:05"),
+		}
+		if user.LastOfflineAt.Valid {
+			vars["last_offline_time"] = user.LastOfflineAt.Time.Format("2006-01-02 15:04:05")
+		}
+		go func() {
+			if err := u.jobSvc.TriggerByEvent(context.Background(), "user_login", user.Uuid, vars); err != nil {
+				zlog.Error("trigger by event failed: " + err.Error())
+			}
+		}()
+	}
 
 	token, err := myjwt.GenerateToken(user.Uuid, user.Username)
 	if err != nil {

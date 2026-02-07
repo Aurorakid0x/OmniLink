@@ -19,7 +19,6 @@ import (
 	aiReader "OmniLink/internal/modules/ai/infrastructure/reader"
 	aiTransform "OmniLink/internal/modules/ai/infrastructure/transform"
 	aiVectordb "OmniLink/internal/modules/ai/infrastructure/vectordb"
-	aiEvent "OmniLink/internal/modules/ai/interface/event"
 	aiHTTP "OmniLink/internal/modules/ai/interface/http"
 	aiScheduler "OmniLink/internal/modules/ai/interface/scheduler"
 
@@ -219,16 +218,12 @@ func init() {
 	} else {
 		zlog.Warn("ai milvus client is nil; ai routes disabled")
 	}
-	userSvc := service.NewUserInfoService(userRepo, userLifecycleSvc)
+	userSvc := service.NewUserInfoService(userRepo, userLifecycleSvc, aiJobSvc)
 	contactSvc := contactService.NewContactService(contactRepo, applyRepo, userRepo, uow, aiAsyncIngest)
 	groupSvc := contactService.NewGroupService(contactRepo, groupRepo, userRepo, uow, aiAsyncIngest)
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo, mentionRepo)
 	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, mentionRepo, aiAsyncIngest)
-	var aiEventH *aiEvent.AIEventHandler
-	if aiJobSvc != nil {
-		aiEventH = aiEvent.NewAIEventHandler(aiJobSvc, userSvc)
-	}
 
 	// MCP Initialization
 	if conf.MCPConfig.Enabled {
@@ -350,7 +345,7 @@ func init() {
 	groupH := contactHandler.NewGroupHandler(groupSvc)
 	sessionH := chatHandler.NewSessionHandler(sessionSvc)
 	messageH := chatHandler.NewMessageHandler(messageSvc)
-	wsH := chatHandler.NewWsHandler(wsHub, realtimeSvc, userRepo, aiEventH)
+	wsH := chatHandler.NewWsHandler(wsHub, realtimeSvc, userRepo)
 	GE.POST("/login", userH.Login)
 	GE.POST("/register", userH.Register)
 	GE.GET("/wss", wsH.Connect)

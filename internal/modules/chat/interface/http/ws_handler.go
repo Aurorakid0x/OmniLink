@@ -8,7 +8,6 @@ import (
 
 	chatRequest "OmniLink/internal/modules/chat/application/dto/request"
 	chatService "OmniLink/internal/modules/chat/application/service"
-	aiEvent "OmniLink/internal/modules/ai/interface/event"
 	userRepository "OmniLink/internal/modules/user/domain/repository"
 	"OmniLink/pkg/util/myjwt"
 	"OmniLink/pkg/ws"
@@ -19,18 +18,16 @@ import (
 )
 
 type WsHandler struct {
-	hub          *ws.Hub
-	svc          chatService.RealtimeService
-	userRepo     userRepository.UserInfoRepository
-	aiEventH     *aiEvent.AIEventHandler
+	hub      *ws.Hub
+	svc      chatService.RealtimeService
+	userRepo userRepository.UserInfoRepository
 }
 
-func NewWsHandler(hub *ws.Hub, svc chatService.RealtimeService, userRepo userRepository.UserInfoRepository, aiEventH *aiEvent.AIEventHandler) *WsHandler {
+func NewWsHandler(hub *ws.Hub, svc chatService.RealtimeService, userRepo userRepository.UserInfoRepository) *WsHandler {
 	return &WsHandler{
 		hub:      hub,
 		svc:      svc,
 		userRepo: userRepo,
-		aiEventH: aiEventH,
 	}
 }
 
@@ -77,9 +74,6 @@ func (h *WsHandler) Connect(c *gin.Context) {
 
 	client := ws.NewClient(clientID, conn)
 	h.hub.Register(client)
-	if h.aiEventH != nil {
-		go h.aiEventH.OnUserLogin(context.Background(), clientID)
-	}
 	// 上线：更新 LastOnlineAt
 	go func() {
 		if err := h.userRepo.UpdateLastOnlineAt(c.Request.Context(), clientID, time.Now()); err != nil {

@@ -11,7 +11,7 @@ type AIJobRepository interface {
 	// Def CRUD
 	CreateDef(ctx context.Context, def *job.AIJobDef) error
 	GetActiveCronDefs(ctx context.Context) ([]*job.AIJobDef, error)
-	GetDefsByEvent(ctx context.Context, eventKey string) ([]*job.AIJobDef, error)
+	GetDefsByEvent(ctx context.Context, eventKey string) ([]*job.AIJobDef, error) //这里是查找系统全局规则，会过滤TenantUserID，也就是说如果TenantUserID有值则会被过滤。
 	GetDefsByEventAndUser(ctx context.Context, eventKey string, userID string) ([]*job.AIJobDef, error)
 	// DeactivateDef 软删除任务定义（仅对所属用户）
 	DeactivateDef(ctx context.Context, defID int64, userID string) error

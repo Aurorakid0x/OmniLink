@@ -33,7 +33,7 @@ func (r *aiJobRepoImpl) GetActiveCronDefs(ctx context.Context) ([]*job.AIJobDef,
 func (r *aiJobRepoImpl) GetDefsByEvent(ctx context.Context, eventKey string) ([]*job.AIJobDef, error) {
 	var defs []*job.AIJobDef
 	err := r.db.WithContext(ctx).
-		Where("is_active = ? AND trigger_type = ? AND event_key = ?", true, job.TriggerTypeEvent, eventKey).
+		Where("is_active = ? AND trigger_type = ? AND event_key = ? AND (tenant_user_id = '' OR tenant_user_id IS NULL)", true, job.TriggerTypeEvent, eventKey).
 		Find(&defs).Error
 	return defs, err
 }

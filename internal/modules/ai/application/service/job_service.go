@@ -53,11 +53,19 @@ func (s *aiJobServiceImpl) TriggerByEvent(ctx context.Context, eventKey string, 
 		zlog.Info("ai job trigger by event no defs", zap.String("event_key", eventKey), zap.String("tenant_user_id", tenantUserID))
 		return nil
 	}
+
+	// Deduplicate definitions
+	uniqueDefs := make(map[int64]*job.AIJobDef)
+	for _, def := range defs {
+		uniqueDefs[def.ID] = def
+	}
+
 	zlog.Info("ai job trigger by event",
 		zap.String("event_key", eventKey),
 		zap.String("tenant_user_id", tenantUserID),
-		zap.Int("defs", len(defs)))
-	for _, def := range defs {
+		zap.Int("defs", len(uniqueDefs)))
+
+	for _, def := range uniqueDefs {
 		finalPrompt := def.Prompt
 		for k, v := range vars {
 			finalPrompt = strings.ReplaceAll(finalPrompt, "{{"+k+"}}", v)
