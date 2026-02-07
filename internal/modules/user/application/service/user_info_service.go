@@ -11,9 +11,11 @@ import (
 	"OmniLink/pkg/zlog"
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	aiService "OmniLink/internal/modules/ai/application/service"
+
 	"gorm.io/gorm"
 )
 
@@ -21,6 +23,7 @@ import (
 type UserInfoService interface {
 	Register(registerReq request.RegisterRequest) (*respond.RegisterRespond, error)
 	Login(loginReq request.LoginRequest) (*respond.LoginRespond, error)
+	GetUserInfoInternal(ctx context.Context, uuid string) (*respond.InternalUserInfoRespond, error)
 }
 
 type userInfoServiceImpl struct {
@@ -144,5 +147,46 @@ func (u *userInfoServiceImpl) Login(loginReq request.LoginRequest) (*respond.Log
 		IsAdmin:   user.IsAdmin,
 		Status:    user.Status,
 		Token:     token,
+	}, nil
+}
+
+func (u *userInfoServiceImpl) GetUserInfoInternal(ctx context.Context, uuid string) (*respond.InternalUserInfoRespond, error) {
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
+		return nil, xerr.New(xerr.BadRequest, "uuid is required")
+	}
+
+	user, err := u.repo.GetUserInfoByUUIDWithoutPassword(uuid)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, xerr.New(xerr.BadRequest, "用户不存在")
+		}
+		zlog.Error(err.Error())
+		return nil, xerr.ErrServerError
+	}
+
+	lastOnlineAt := ""
+	if user.LastOnlineAt.Valid {
+		lastOnlineAt = user.LastOnlineAt.Time.Format("2006-01-02 15:04:05")
+	}
+	lastOfflineAt := ""
+	if user.LastOfflineAt.Valid {
+		lastOfflineAt = user.LastOfflineAt.Time.Format("2006-01-02 15:04:05")
+	}
+
+	return &respond.InternalUserInfoRespond{
+		Id:            user.Id,
+		Uuid:          user.Uuid,
+		Username:      user.Username,
+		Nickname:      user.Nickname,
+		Avatar:        user.Avatar,
+		Gender:        user.Gender,
+		Signature:     user.Signature,
+		Birthday:      user.Birthday,
+		CreatedAt:     user.CreatedAt.Format("2006-01-02 15:04:05"),
+		LastOnlineAt:  lastOnlineAt,
+		LastOfflineAt: lastOfflineAt,
+		IsAdmin:       user.IsAdmin,
+		Status:        user.Status,
 	}, nil
 }

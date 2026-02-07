@@ -378,6 +378,7 @@ func init() {
 			aiGroup.POST("/sessions", aiAssistantH.CreateSession)
 		}
 	}
+	authed.POST("/user/internal/getUserInfo", userH.GetUserInfoInternal)
 	authed.POST("/contact/getUserList", contactH.GetUserList)
 	authed.POST("/contact/loadMyJoinedGroup", contactH.LoadMyJoinedGroup)
 	authed.POST("/contact/getContactInfo", contactH.GetContactInfo)

@@ -7,6 +7,7 @@ import (
 	"OmniLink/pkg/xerr"
 	"OmniLink/pkg/zlog"
 	"fmt"
+	"strings"
 
 	//"net/http"
 
@@ -41,5 +42,24 @@ func (h *UserInfoHandler) Register(c *gin.Context) {
 	}
 	fmt.Println(registerReq)
 	data, err := h.svc.Register(registerReq)
+	back.Result(c, data, err)
+}
+
+func (h *UserInfoHandler) GetUserInfoInternal(c *gin.Context) {
+	var req request.InternalUserInfoRequest
+	if err := c.BindJSON(&req); err != nil {
+		zlog.Error(err.Error())
+		back.Error(c, xerr.BadRequest, xerr.ErrParam.Message)
+		return
+	}
+	uuid := strings.TrimSpace(req.Uuid)
+	if uuid == "" {
+		back.Error(c, xerr.BadRequest, "uuid is required")
+		return
+	}
+	data, err := h.svc.GetUserInfoInternal(c.Request.Context(), uuid)
+	if err != nil {
+		zlog.Error(err.Error())
+	}
 	back.Result(c, data, err)
 }
