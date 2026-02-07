@@ -39,7 +39,26 @@ func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 		mcp.WithString("action", mcp.Required(), mcp.Description("操作类型: create | delete")),
 		mcp.WithString("trigger_type", mcp.Description("触发类型: once | cron | event")),
 		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传5段表达式(0 8 * * *), event传事件key(仅支持: user_login, new_friend_apply, group_mention，使用list_supported_events查看完整列表)")),
-		mcp.WithString("prompt", mcp.Description("**系统指令prompt**：任务触发时发给AI的指令，描述AI需要完成什么任务。\n示例：'用户想查询好友列表，请调用list_friends工具获取信息并告知用户'\n示例：'请发送友好的提醒消息'\n**注意**：这是给AI的任务描述，不是直接发给用户的消息内容，无需加入用户设置的定时时间等话语，因为只有任务触发了，prompt才会发送给AI")),
+		mcp.WithString("task_description", mcp.Description("【可选】任务的完整描述，仅用于帮助你理解上下文，不会存储到数据库。例如: '每天8点提醒用户喝水'、'用户登录时查询待办事项'。这个参数可以包含时间、触发条件等完整信息，用于你理解用户意图。")),
+		mcp.WithString("prompt", mcp.Description(`任务执行时发送给 AI 的指令（纯执行动作，不含触发条件）
+
+【格式要求】
+- 只描述要做什么（What to do）
+- 不要包含何时做（When）、为什么做（Why）、触发条件
+
+【正确示例】
+✅ "提醒用户喝水，发送友好的消息"
+✅ "查询用户今日待办事项列表并告知"
+✅ "调用 weather 工具获取天气信息并推送给用户"
+✅ "检查用户是否有未读消息，如果有则提醒"
+
+【错误示例】
+❌ "每天8点提醒用户喝水"（包含时间，应去掉"每天8点"）
+❌ "用户登录时查询待办事项"（包含触发条件，应去掉"用户登录时"）
+❌ "因为用户设置了提醒，所以发送消息"（包含原因，应只写"发送消息"）
+❌ "在9:00提醒开会"（包含时间，应改为"提醒用户开会"）
+
+【提示】触发条件已由 trigger_type 和 trigger_value 定义，prompt 只需关注执行逻辑`)),
 		mcp.WithString("agent_id", mcp.Description("执行任务的AgentID (可选，默认使用当前Agent)")),
 		mcp.WithNumber("job_def_id", mcp.Description("删除任务时传入的任务定义ID")),
 	), h.handleManageJob)
