@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"OmniLink/internal/modules/ai/application/service"
+	"OmniLink/internal/modules/ai/domain/job"
 	"OmniLink/internal/modules/ai/domain/repository"
 	"OmniLink/pkg/zlog"
 
@@ -37,7 +38,7 @@ func (h *JobManagementHandler) RegisterTools(s *server.MCPServer) {
 		mcp.WithDescription("创建或管理 AI 自动化任务。支持定时(cron)、一次性(once)、事件驱动(event)三种模式。用于生成发送给Agent执行的指令。"),
 		mcp.WithString("action", mcp.Required(), mcp.Description("操作类型: create | delete")),
 		mcp.WithString("trigger_type", mcp.Description("触发类型: once | cron | event")),
-		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传5段表达式(0 8 * * *), event传事件key(user_login)")),
+		mcp.WithString("trigger_value", mcp.Description("触发值: once传ISO时间(2006-01-02T15:04:05Z), cron传5段表达式(0 8 * * *), event传事件key(仅支持: user_login, new_friend_apply, group_mention，使用list_supported_events查看完整列表)")),
 		mcp.WithString("prompt", mcp.Description("**系统指令prompt**：任务触发时发给AI的指令，描述AI需要完成什么任务。\n示例：'用户想查询好友列表，请调用list_friends工具获取信息并告知用户'\n示例：'请发送友好的提醒消息'\n**注意**：这是给AI的任务描述，不是直接发给用户的消息内容，无需加入用户设置的定时时间等话语，因为只有任务触发了，prompt才会发送给AI")),
 		mcp.WithString("agent_id", mcp.Description("执行任务的AgentID (可选，默认使用当前Agent)")),
 		mcp.WithNumber("job_def_id", mcp.Description("删除任务时传入的任务定义ID")),
@@ -207,6 +208,18 @@ func (h *JobManagementHandler) handleManageJob(ctx context.Context, request mcp.
 				zlog.Warn("manage_ai_job missing event key", zap.String("user_id", userID))
 				return mcp.NewToolResultError("event key is required"), nil
 			}
+			if !job.IsValidEventKey(triggerValue) {
+				supported := make([]string, 0, len(job.AllSupportedEvents()))
+				for k := range job.AllSupportedEvents() {
+					supported = append(supported, k)
+				}
+				zlog.Warn("manage_ai_job invalid event key",
+					zap.String("user_id", userID),
+					zap.String("event_key", triggerValue),
+					zap.Strings("supported", supported))
+				return mcp.NewToolResultError(
+					fmt.Sprintf("不支持的 event_key: %s，仅支持: %s", triggerValue, strings.Join(supported, ", "))), nil
+			}
 			if err := h.jobSvc.CreateEventJob(ctx, userID, targetAgentID, sessionID, prompt, triggerValue); err != nil {
 				zlog.Warn("manage_ai_job create event failed", zap.Error(err), zap.String("user_id", userID), zap.String("agent_id", targetAgentID), zap.String("session_id", sessionID), zap.String("event_key", triggerValue))
 				return mcp.NewToolResultError("failed: " + err.Error()), nil
@@ -267,12 +280,12 @@ func (h *JobManagementHandler) handleListAgents(ctx context.Context, request mcp
 }
 
 func (h *JobManagementHandler) handleListEvents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	events := []string{
-		"user_login - 用户登录时触发",
-		"new_friend_apply - 收到好友申请时触发 (Todo)",
-		"group_mention - 群里被@时触发 (Todo)",
+	events := job.AllSupportedEvents()
+	var lines []string
+	for key, desc := range events {
+		lines = append(lines, fmt.Sprintf("%s - %s", key, desc))
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Supported Events:\n%v", events)), nil
+	return mcp.NewToolResultText(fmt.Sprintf("Supported Events:\n%s", strings.Join(lines, "\n"))), nil
 }
 
 func (h *JobManagementHandler) handleGetCurrentTime(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

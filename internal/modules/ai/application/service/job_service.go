@@ -190,6 +190,12 @@ func (s *aiJobServiceImpl) CreateCronJob(ctx context.Context, userID string, age
 }
 
 func (s *aiJobServiceImpl) CreateEventJob(ctx context.Context, userID string, agentID string, sessionID string, prompt string, eventKey string) error {
+	if !job.IsValidEventKey(eventKey) {
+		zlog.Warn("ai job create event invalid key",
+			zap.String("tenant_user_id", userID),
+			zap.String("event_key", eventKey))
+		return errors.New("unsupported event_key: " + eventKey)
+	}
 	if err := s.validateSession(ctx, userID, agentID, sessionID); err != nil {
 		zlog.Warn("ai job create event validate failed",
 			zap.Error(err),
