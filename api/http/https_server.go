@@ -19,6 +19,7 @@ import (
 	aiReader "OmniLink/internal/modules/ai/infrastructure/reader"
 	aiTransform "OmniLink/internal/modules/ai/infrastructure/transform"
 	aiVectordb "OmniLink/internal/modules/ai/infrastructure/vectordb"
+	aiEvent "OmniLink/internal/modules/ai/interface/event"
 	aiHTTP "OmniLink/internal/modules/ai/interface/http"
 	aiScheduler "OmniLink/internal/modules/ai/interface/scheduler"
 
@@ -224,6 +225,10 @@ func init() {
 	sessionSvc := chatService.NewSessionService(sessionRepo, contactRepo, userRepo, groupRepo)
 	messageSvc := chatService.NewMessageService(messageRepo, contactRepo, mentionRepo)
 	realtimeSvc := chatService.NewRealtimeService(messageRepo, sessionRepo, contactRepo, userRepo, groupRepo, mentionRepo, aiAsyncIngest)
+	var aiEventH *aiEvent.AIEventHandler
+	if aiJobSvc != nil {
+		aiEventH = aiEvent.NewAIEventHandler(aiJobSvc, userSvc)
+	}
 
 	// MCP Initialization
 	if conf.MCPConfig.Enabled {
@@ -281,14 +286,14 @@ func init() {
 						zlog.Error("Failed to get builtin tools: " + err.Error())
 					} else {
 						allTools = append(allTools, builtinTools...)
-					zlog.Info(fmt.Sprintf("Registered %d builtin tools", len(builtinTools)))
-					for _, t := range builtinTools {
-						info, err := t.Info(context.Background())
-						if err != nil || info == nil {
-							continue
+						zlog.Info(fmt.Sprintf("Registered %d builtin tools", len(builtinTools)))
+						for _, t := range builtinTools {
+							info, err := t.Info(context.Background())
+							if err != nil || info == nil {
+								continue
+							}
+							zlog.Info(fmt.Sprintf("Builtin tool: %s", info.Name))
 						}
-						zlog.Info(fmt.Sprintf("Builtin tool: %s", info.Name))
-					}
 					}
 				}
 			}
@@ -345,7 +350,7 @@ func init() {
 	groupH := contactHandler.NewGroupHandler(groupSvc)
 	sessionH := chatHandler.NewSessionHandler(sessionSvc)
 	messageH := chatHandler.NewMessageHandler(messageSvc)
-	wsH := chatHandler.NewWsHandler(wsHub, realtimeSvc, userRepo)
+	wsH := chatHandler.NewWsHandler(wsHub, realtimeSvc, userRepo, aiEventH)
 	GE.POST("/login", userH.Login)
 	GE.POST("/register", userH.Register)
 	GE.GET("/wss", wsH.Connect)
