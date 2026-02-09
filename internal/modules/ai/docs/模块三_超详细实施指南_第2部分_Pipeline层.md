@@ -52,35 +52,46 @@ type CacheInterface interface {
 // 1. 管理所有插件
 // 2. 根据 ServiceType 路由到对应插件
 // 3. 处理缓存逻辑
-// 4. 调用 LLM
+// 4. 调用 LLM（每个服务可用不同模型）
 // 5. 记录性能指标
 //
 // 设计原理：
 // - 插件注册模式：动态添加/移除插件
+// - 多模型支持：每个服务独立配置模型（input_prediction/polish/digest）
 // - 缓存优先：先查缓存，未命中再调用 LLM
 // - 统一错误处理：所有插件共享相同的错误处理逻辑
 type MicroservicePipeline struct {
-	chatModel model.BaseChatModel                     // LLM 模型
-	cache     CacheInterface                          // 缓存（Redis）
-	plugins   map[string]plugins.MicroservicePlugin   // 插件映射表
+	chatModels map[string]model.BaseChatModel        // LLM 模型映射（key: service_type）
+	cache      CacheInterface                        // 缓存（Redis）
+	plugins    map[string]plugins.MicroservicePlugin // 插件映射表
 }
 
 // NewMicroservicePipeline 创建微服务 Pipeline
 //
 // 参数：
-//   - chatModel: LLM 模型（必须）
+//   - chatModels: LLM 模型映射（必须）
+//     格式：map[string]model.BaseChatModel
+//     示例：{
+//       "input_prediction": inputModel,
+//       "polish": polishModel,
+//       "digest": digestModel,
+//     }
 //   - cache: 缓存接口（可选，传 nil 禁用缓存）
 //
 // 返回值：
 //   - *MicroservicePipeline: Pipeline 实例
+//
+// 设计要点：
+// - 支持每个服务使用不同的模型和配置
+// - 模型映射在启动时创建，运行时只读
 func NewMicroservicePipeline(
-	chatModel model.BaseChatModel,
+	chatModels map[string]model.BaseChatModel,
 	cache CacheInterface,
 ) *MicroservicePipeline {
 	p := &MicroservicePipeline{
-		chatModel: chatModel,
-		cache:     cache,
-		plugins:   make(map[string]plugins.MicroservicePlugin),
+		chatModels: chatModels,
+		cache:      cache,
+		plugins:    make(map[string]plugins.MicroservicePlugin),
 	}
 
 	// 注册默认插件
@@ -186,16 +197,25 @@ func (p *MicroservicePipeline) Execute(ctx context.Context, req *plugins.PluginR
 	// ========== Step 5: 调用 LLM ==========
 	//
 	// 设计要点：
+	// - 根据 ServiceType 选择对应的模型
+	// - 每个服务可以使用不同的模型配置
 	// - 转换为 Eino 要求的指针数组格式
 	// - 使用 Generate 进行非流式调用
 	// - 记录调用时间和 Token 消耗
+	
+	// 获取当前服务的模型
+	chatModel, ok := p.chatModels[req.ServiceType]
+	if !ok {
+		return nil, fmt.Errorf("no model configured for service type: %s", req.ServiceType)
+	}
+	
 	promptMsgPtrs := make([]*schema.Message, len(promptMsgs))
 	for i := range promptMsgs {
 		promptMsgPtrs[i] = &promptMsgs[i]
 	}
 
 	llmStart := time.Now()
-	llmResp, err := p.chatModel.Generate(ctx, promptMsgPtrs)
+	llmResp, err := chatModel.Generate(ctx, promptMsgPtrs)
 	llmMs := time.Since(llmStart).Milliseconds()
 
 	if err != nil {
@@ -261,9 +281,10 @@ func (p *MicroservicePipeline) Execute(ctx context.Context, req *plugins.PluginR
 // 流程：
 // 1. 获取插件
 // 2. 参数验证
-// 3. 构建 Prompt
-// 4. 调用 LLM Stream
-// 5. 返回 StreamReader
+// 3. 选择对应模型
+// 4. 构建 Prompt
+// 5. 调用 LLM Stream
+// 6. 返回 StreamReader
 //
 // 注意事项：
 // - 流式模式下不检查缓存（实时性优先）
@@ -281,20 +302,26 @@ func (p *MicroservicePipeline) ExecuteStream(ctx context.Context, req *plugins.P
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Step 3: 构建 Prompt
+	// Step 3: 获取当前服务的模型
+	chatModel, ok := p.chatModels[req.ServiceType]
+	if !ok {
+		return nil, fmt.Errorf("no model configured for service type: %s", req.ServiceType)
+	}
+
+	// Step 4: 构建 Prompt
 	promptMsgs, err := plugin.BuildPrompt(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("build prompt failed: %w", err)
 	}
 
-	// Step 4: 转换为指针数组
+	// Step 5: 转换为指针数组
 	promptMsgPtrs := make([]*schema.Message, len(promptMsgs))
 	for i := range promptMsgs {
 		promptMsgPtrs[i] = &promptMsgs[i]
 	}
 
-	// Step 5: 调用 LLM Stream
-	streamReader, err := p.chatModel.Stream(ctx, promptMsgPtrs)
+	// Step 6: 调用 LLM Stream
+	streamReader, err := chatModel.Stream(ctx, promptMsgPtrs)
 	if err != nil {
 		zlog.Error("llm stream failed",
 			zap.Error(err),
@@ -322,10 +349,17 @@ func (p *MicroservicePipeline) ExecuteStream(ctx context.Context, req *plugins.P
 
 2. **插件注册模式**
    ```go
-   // 启动时注册默认插件
-   pipeline := NewMicroservicePipeline(chatModel, cache)
+   // 创建多模型映射
+   chatModels := map[string]model.BaseChatModel{
+       "input_prediction": inputModel,
+       "polish":           polishModel,
+       "digest":           digestModel,
+   }
    
-   // 运行时动态添加
+   // 创建 Pipeline
+   pipeline := NewMicroservicePipeline(chatModels, cache)
+   
+   // 运行时动态添加插件
    pipeline.RegisterPlugin(NewCustomPlugin())
    
    // 覆盖现有插件
@@ -358,8 +392,15 @@ func TestMicroservicePipeline_Execute(t *testing.T) {
         },
     }
     
+    // 创建模型映射
+    chatModels := map[string]model.BaseChatModel{
+        "input_prediction": mockModel,
+        "polish":           mockModel,
+        "digest":           mockModel,
+    }
+    
     // 创建 Pipeline
-    pipe := NewMicroservicePipeline(mockModel, nil)
+    pipe := NewMicroservicePipeline(chatModels, nil)
     
     // 执行请求
     req := &plugins.PluginRequest{
@@ -392,44 +433,92 @@ import (
 	"fmt"
 
 	"OmniLink/internal/config"
+	"OmniLink/pkg/zlog"
 
 	"github.com/cloudwego/eino/components/model"
 	arkModel "github.com/cloudwego/eino-ext/components/model/ark"
+	"go.uber.org/zap"
 )
 
-// NewLightweightChatModel 创建轻量模型（专用于微服务）
+// NewMicroserviceChatModels 创建微服务专用的多模型映射
 //
 // 设计原理：
-// - 使用专用的小模型配置（7B/8B）
-// - 独立于主力模型（GPT-4/Claude）
-// - 成本优先：单次调用 < ¥0.001
+// - 每个服务（input_prediction/polish/digest）使用独立的模型实例
+// - 支持不同的 Provider 和模型配置
+// - 独立于主力模型（GPT-4/Claude），成本可控
 //
 // 参数：
 //   - ctx: 上下文
 //   - conf: 配置对象
 //
 // 返回值：
-//   - model.BaseChatModel: Eino ChatModel 接口
+//   - map[string]model.BaseChatModel: 服务类型到模型的映射
+//     格式：{
+//       "input_prediction": inputModel,
+//       "polish": polishModel,
+//       "digest": digestModel,
+//     }
 //   - error: 初始化失败时返回错误
 //
 // 配置来源：
 // - config.toml 中的 [aiConfig.microservice.xxx] 段
-func NewLightweightChatModel(ctx context.Context, conf *config.Config) (model.BaseChatModel, error) {
+func NewMicroserviceChatModels(ctx context.Context, conf *config.Config) (map[string]model.BaseChatModel, error) {
 	// 检查微服务是否启用
 	if !conf.AIConfig.Microservice.Enabled {
 		return nil, fmt.Errorf("microservice is disabled in config")
 	}
 
-	// 获取智能输入的模型配置
-	// 
-	// 注意事项：
-	// - 这里使用 input_prediction 的配置作为默认
-	// - 不同功能可以使用不同的模型（通过配置区分）
-	// - 后续可以扩展为根据 ServiceType 选择模型
-	microConf := conf.AIConfig.Microservice.InputPrediction
+	models := make(map[string]model.BaseChatModel)
 
+	// ========== 1. 创建智能输入预测模型 ==========
+	inputModel, err := createModelFromConfig(ctx, "input_prediction", conf.AIConfig.Microservice.InputPrediction)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create input_prediction model: %w", err)
+	}
+	models["input_prediction"] = inputModel
+	zlog.Info("microservice model created",
+		zap.String("service_type", "input_prediction"),
+		zap.String("provider", conf.AIConfig.Microservice.InputPrediction.Provider),
+		zap.String("model", conf.AIConfig.Microservice.InputPrediction.Model))
+
+	// ========== 2. 创建文本润色模型 ==========
+	polishModel, err := createModelFromConfig(ctx, "polish", conf.AIConfig.Microservice.Polish)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create polish model: %w", err)
+	}
+	models["polish"] = polishModel
+	zlog.Info("microservice model created",
+		zap.String("service_type", "polish"),
+		zap.String("provider", conf.AIConfig.Microservice.Polish.Provider),
+		zap.String("model", conf.AIConfig.Microservice.Polish.Model))
+
+	// ========== 3. 创建消息摘要模型 ==========
+	digestModel, err := createModelFromConfig(ctx, "digest", conf.AIConfig.Microservice.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create digest model: %w", err)
+	}
+	models["digest"] = digestModel
+	zlog.Info("microservice model created",
+		zap.String("service_type", "digest"),
+		zap.String("provider", conf.AIConfig.Microservice.Digest.Provider),
+		zap.String("model", conf.AIConfig.Microservice.Digest.Model))
+
+	return models, nil
+}
+
+// createModelFromConfig 根据配置创建模型实例
+//
+// 参数：
+//   - ctx: 上下文
+//   - serviceType: 服务类型（用于日志）
+//   - conf: 服务模型配置
+//
+// 返回值：
+//   - model.BaseChatModel: Eino ChatModel 接口
+//   - error: 初始化失败时返回错误
+func createModelFromConfig(ctx context.Context, serviceType string, conf config.ServiceModelConfig) (model.BaseChatModel, error) {
 	// 根据 Provider 类型创建模型
-	switch microConf.Provider {
+	switch conf.Provider {
 	case "ark":
 		// 火山引擎 Ark（豆包）
 		// 
@@ -437,9 +526,9 @@ func NewLightweightChatModel(ctx context.Context, conf *config.Config) (model.Ba
 		// - doubao-lite-8k: ¥0.0003/1K tokens
 		// - doubao-pro-32k: ¥0.003/1K tokens
 		return arkModel.NewChatModel(ctx, &arkModel.Config{
-			APIKey:  microConf.APIKey,
-			BaseURL: microConf.BaseURL,
-			Model:   microConf.Model,
+			APIKey:  conf.APIKey,
+			BaseURL: conf.BaseURL,
+			Model:   conf.Model,
 		})
 
 	case "openai":
@@ -452,7 +541,7 @@ func NewLightweightChatModel(ctx context.Context, conf *config.Config) (model.Ba
 		return nil, fmt.Errorf("openai provider not implemented yet")
 
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", microConf.Provider)
+		return nil, fmt.Errorf("unsupported provider: %s", conf.Provider)
 	}
 }
 ```
@@ -461,12 +550,23 @@ func NewLightweightChatModel(ctx context.Context, conf *config.Config) (model.Ba
 
 #### 核心设计要点
 
-1. **独立配置**
+1. **多模型架构**
+   - ✅ 每个服务独立的模型实例
+   - ✅ 支持不同的 Provider（ark/openai/deepseek）
    - ✅ 不影响 AI Assistant 的主力模型
-   - ✅ 可以使用不同的 Provider
    - ✅ 成本可控（小模型）
 
-2. **Provider 扩展性**
+2. **模型映射结构**
+   ```go
+   // 返回的模型映射
+   models := map[string]model.BaseChatModel{
+       "input_prediction": inputModel,  // doubao-lite-8k
+       "polish":           polishModel,  // doubao-lite-8k
+       "digest":           digestModel,  // doubao-pro-32k
+   }
+   ```
+
+3. **Provider 扩展性**
    ```go
    // 未来可以添加更多 Provider
    switch provider {
@@ -479,17 +579,27 @@ func NewLightweightChatModel(ctx context.Context, conf *config.Config) (model.Ba
    }
    ```
 
-3. **配置分离**
+4. **配置独立性**
    ```toml
    # 主力模型（AI Assistant）
    [aiConfig.chatModel]
    provider = "openai"
    model = "gpt-4"
    
-   # 轻量模型（微服务）
+   # 智能输入模型（微服务）
    [aiConfig.microservice.input_prediction]
    provider = "ark"
    model = "doubao-lite-8k"
+   
+   # 文本润色模型（微服务）
+   [aiConfig.microservice.polish]
+   provider = "ark"
+   model = "doubao-lite-8k"
+   
+   # 消息摘要模型（微服务）
+   [aiConfig.microservice.digest]
+   provider = "ark"
+   model = "doubao-pro-32k"  # 使用长上下文模型
    ```
 
 #### 成本对比
@@ -512,9 +622,10 @@ func NewLightweightChatModel(ctx context.Context, conf *config.Config) (model.Ba
 ### 核心特性
 
 - ✅ 插件化架构（可扩展）
+- ✅ 多模型支持（每个服务独立配置）
 - ✅ 缓存优先策略（高性能）
 - ✅ 统一错误处理（易维护）
-- ✅ 成本可控（小模型）
+- ✅ 成本可控（可针对不同服务选择合适模型）
 
 ### 下一步
 

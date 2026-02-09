@@ -673,9 +673,14 @@ func TestAIMicroserviceImpl_Predict(t *testing.T) {
 ```go
 func TestAIMicroserviceImpl_PredictStream_Integration(t *testing.T) {
     // 1. 创建真实的 Pipeline
-    chatModel := // ... 初始化真实 ChatModel
+    // 创建多模型映射
+    chatModels := map[string]model.BaseChatModel{
+        "input_prediction": // ... 初始化真实 ChatModel
+        "polish":           // ... 初始化真实 ChatModel
+        "digest":           // ... 初始化真实 ChatModel
+    }
     cache := // ... 初始化真实 Cache
-    pipeline := pipeline.NewMicroservicePipeline(chatModel, cache)
+    pipeline := pipeline.NewMicroservicePipeline(chatModels, cache)
     
     // 2. 创建 Service
     service := NewAIMicroserviceService(pipeline)
