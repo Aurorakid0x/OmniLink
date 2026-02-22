@@ -58,7 +58,7 @@ type CacheInterface interface {
 // 设计原理：
 // - 插件注册模式：动态添加/移除插件
 // - 多模型支持：每个服务独立配置模型（input_prediction/polish/digest）
-// - 缓存优先：先查缓存，未命中再调用 LLM
+// - 缓存优先：先查缓存，未命中再调用 LLM。
 // - 统一错误处理：所有插件共享相同的错误处理逻辑
 type MicroservicePipeline struct {
 	chatModels map[string]model.BaseChatModel        // LLM 模型映射（key: service_type）
