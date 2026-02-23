@@ -3,6 +3,8 @@ package main
 import (
 	https_server "OmniLink/api/http"
 	"OmniLink/internal/config"
+	_ "OmniLink/internal/initial" // 触发初始化（Redis 等）
+	"OmniLink/pkg/redis"
 	"OmniLink/pkg/zlog"
 	"fmt"
 	"os"
@@ -42,6 +44,9 @@ func main() {
 
 	zlog.Info("正在关闭服务器...")
 	// 在此处添加资源释放逻辑（如关闭数据库连接、Redis 等）
+	if err := redis.Close(); err != nil {
+		zlog.Error("关闭 Redis 连接失败: " + err.Error())
+	}
 
 	zlog.Info("服务器已关闭")
 }

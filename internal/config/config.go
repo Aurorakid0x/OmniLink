@@ -105,6 +105,15 @@ type MCPConfig struct {
 	BuiltinServer            MCPBuiltinServerConfig `toml:"builtinServer"`
 }
 
+type RedisConfig struct {
+	Host         string `toml:"host"`
+	Port         int    `toml:"port"`
+	Password     string `toml:"password"`
+	DB           int    `toml:"db"`
+	PoolSize     int    `toml:"poolSize"`
+	MinIdleConns int    `toml:"minIdleConns"`
+}
+
 type Config struct {
 	MainConfig   `toml:"mainConfig"`
 	MysqlConfig  `toml:"mysqlConfig"`
@@ -114,6 +123,7 @@ type Config struct {
 	AIConfig     `toml:"aiConfig"`
 	LogConfig    `toml:"logConfig"`
 	MCPConfig    `toml:"mcpConfig"`
+	RedisConfig  `toml:"redisConfig"`
 }
 
 var config *Config
