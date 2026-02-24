@@ -7,7 +7,7 @@ import (
 	"OmniLink/internal/config"
 	"OmniLink/pkg/zlog"
 
-	arkModel "github.com/cloudwego/eino-ext/components/model/ark"
+	//arkModel "github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/components/model"
 	"go.uber.org/zap"
 )
@@ -97,12 +97,12 @@ func createModelFromConfig(ctx context.Context, serviceType string, conf config.
 		// 推荐模型：
 		// - doubao-lite-8k: ¥0.0003/1K tokens
 		// - doubao-pro-32k: ¥0.003/1K tokens
-		return arkModel.NewChatModel(ctx, &arkModel.Config{
-			APIKey:  conf.APIKey,
-			BaseURL: conf.BaseURL,
-			Model:   conf.Model,
-		})
-
+		// return arkModel.NewChatModel(ctx, &arkModel.Config{
+		// 	APIKey:  conf.APIKey,
+		// 	BaseURL: conf.BaseURL,
+		// 	Model:   conf.Model,
+		// })
+		return nil, fmt.Errorf("ark provider not implemented yet")
 	case "openai":
 		// OpenAI 兼容接口
 		//

@@ -83,6 +83,9 @@ type AIChatModelConfig struct {
 type AIConfig struct {
 	Embedding AIEmbeddingConfig `toml:"embedding"`
 	ChatModel AIChatModelConfig `toml:"chatModel"`
+
+	// ========== 新增：微服务配置 ==========
+	Microservice MicroserviceConfig `toml:"microservice"`
 }
 
 // MCPBuiltinServerConfig 内置 MCP Server 配置
@@ -154,4 +157,63 @@ func GetConfig() *Config {
 		_ = LoadConfig()
 	}
 	return config
+}
+
+// ========== 微服务配置结构 ==========
+
+// MicroserviceConfig 微服务总配置
+//
+// 设计原理：
+// 1. 每个功能独立配置（input_prediction、polish、digest）
+// 2. 支持全局开关（Enabled）
+// 3. 支持调用日志开关（LogCalls）
+type MicroserviceConfig struct {
+	Enabled  bool `toml:"enabled"`   // 是否启用微服务（总开关）
+	LogCalls bool `toml:"log_calls"` // 是否记录调用日志（开发环境true，生产环境可选）
+
+	// 各功能独立配置
+	InputPrediction ServiceModelConfig `toml:"input_prediction"` // 智能输入预测
+	Polish          ServiceModelConfig `toml:"polish"`           // 文本润色
+	Digest          ServiceModelConfig `toml:"digest"`           // 消息摘要
+}
+
+// ServiceModelConfig 单个微服务的模型配置
+//
+// 设计原理：
+// 1. 每个功能可以使用不同的模型
+// 2. 支持不同的 Provider（ark、openai、deepseek）
+// 3. 支持功能特定的参数（如 ContextMessages）
+//
+// 配置示例：
+//
+//	[aiConfig.microservice.input_prediction]
+//	provider = "ark"
+//	model = "doubao-lite-8k"
+//	api_key = "${DOUBAO_API_KEY}"
+//	temperature = 0.7
+//	max_tokens = 100
+type ServiceModelConfig struct {
+	// ========== LLM 基础配置 ==========
+	Provider       string  `toml:"provider"`        // 提供商：ark/openai/deepseek
+	Model          string  `toml:"model"`           // 模型名称
+	APIKey         string  `toml:"api_key"`         // API Key（支持环境变量）
+	BaseURL        string  `toml:"base_url"`        // API Base URL
+	Temperature    float64 `toml:"temperature"`     // 温度（0-1）
+	MaxTokens      int     `toml:"max_tokens"`      // 最大 Token 数
+	TimeoutSeconds int     `toml:"timeout_seconds"` // 超时时间（秒）
+
+	// ========== 功能特定配置 ==========
+	// 以下参数为可选，不同功能使用不同参数
+
+	// 智能输入预测专用
+	ContextMessages int `toml:"context_messages"`  // 上下文消息数（默认10）
+	DebounceMsint   int `toml:"debounce_ms"`       // 防抖延迟（毫秒，默认500）
+	MaxInputChars   int `toml:"max_input_chars"`   // 最大输入字符（默认500）
+	CacheTTLSeconds int `toml:"cache_ttl_seconds"` // 缓存TTL（秒）
+
+	// 润色专用
+	MaxOptions int `toml:"max_options"` // 最多返回选项数（默认3）
+
+	// 摘要专用
+	MaxMessages int `toml:"max_messages"` // 最多处理消息数（默认200）
 }

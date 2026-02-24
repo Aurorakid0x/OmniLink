@@ -55,12 +55,6 @@ type AssistantService interface {
 	SmartCommand(ctx context.Context, req request.SmartCommandRequest, tenantUserID string) (*respond.SmartCommandRespond, error)
 }
 
-// StreamEvent SSE流式事件
-type StreamEvent struct {
-	Event string      // "delta" or "done" or "error"
-	Data  interface{} // delta: {token: "..."}, done: AssistantStreamDoneEvent, error: {error: "..."}
-}
-
 type assistantServiceImpl struct {
 	sessionRepo      repository.AssistantSessionRepository
 	messageRepo      repository.AssistantMessageRepository
